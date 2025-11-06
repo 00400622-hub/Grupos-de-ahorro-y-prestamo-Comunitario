@@ -1,7 +1,6 @@
 import streamlit as st
 from modulos.venta import mostrar_venta
-from modulos.compras import mostrar_compras
-from modulos.clientes import mostrar_clientes
+
 
 if "sesion_iniciada" in st.session_state and st.session_state["sesion_iniciada"]:
     seleccion = st.sidebar.selectbox("Selecciona una opción", ["Ventas", "Compras","Clientes"])
