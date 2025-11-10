@@ -75,20 +75,45 @@ def login_screen():
             cur.close(); con.close()
             return
 
-        # Cargar permisos por rol
+        # Cargar permisos por rol (detectando nombres reales de columnas)
         try:
-            cur.execute("""
-                SELECT p.clave
+            # 1) Detectar columnas reales en 'permisos'
+            cur.execute("SHOW COLUMNS FROM `permisos`")
+            pcols = {row["Field"].lower(): row["Field"] for row in cur.fetchall()}  # {lower: real}
+
+            # posibles nombres
+            p_id = pcols.get("id") or pcols.get("id_permisos") or pcols.get("idpermisos") or pcols.get("id_permiso") or pcols.get("idpermiso")
+            p_clave = pcols.get("clave") or pcols.get("nombre") or pcols.get("permiso") or pcols.get("descripcion")
+
+            if not p_id or not p_clave:
+                raise RuntimeError("No encuentro columnas 'id'/'clave' (o equivalentes) en la tabla permisos.")
+
+            # 2) Detectar columnas reales en 'Rol_permiso'
+            cur.execute("SHOW COLUMNS FROM `Rol_permiso`")
+            rpcols = {row["Field"].lower(): row["Field"] for row in cur.fetchall()}
+
+            rp_permiso_id = rpcols.get("permiso_id") or rpcols.get("id_permiso") or rpcols.get("idpermisos") or rpcols.get("id_permisos")
+            rp_rol = rpcols.get("rol") or rpcols.get("Rol") or rpcols.get("ROL")
+
+            if not rp_permiso_id or not rp_rol:
+                raise RuntimeError("No encuentro columnas 'permiso_id' y/o 'rol' en la tabla Rol_permiso.")
+
+            # 3) Construir y ejecutar el SELECT de permisos con los nombres detectados
+            sql_perm = f"""
+                SELECT p.`{p_clave}` AS clave
                 FROM `Rol_permiso` rp
-                JOIN `permisos` p ON p.id = rp.permiso_id
-                WHERE rp.rol = %s
-            """, (data["rol"],))
+                JOIN `permisos` p ON p.`{p_id}` = rp.`{rp_permiso_id}`
+                WHERE rp.`{rp_rol}` = %s
+            """
+            cur.execute(sql_perm, (data["rol"],))
             permisos = {r["clave"] for r in cur.fetchall()}
+
         except Exception as e:
-            st.error("No pude leer permisos del rol.")
+            st.error("No pude leer permisos del rol. Revisa que las tablas y columnas existan.")
             st.caption(f"Detalle técnico: {e}")
             cur.close(); con.close()
             return
+
 
         # Guardar sesión
         st.session_state["user"] = {
