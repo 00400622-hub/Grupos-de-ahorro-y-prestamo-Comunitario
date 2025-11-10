@@ -31,10 +31,19 @@ def sidebar_menu():
         else:
             st.info("📄 Reportes del grupo (pendiente).")
 
-    if st.sidebar.button("🚪 Cerrar sesión"):
-        for k in list(st.session_state.keys()):
-            del st.session_state[k]
-        st.experimental_rerun()
+    def _safe_rerun():
+    try:
+        st.rerun()
+    except Exception:
+        try:
+            st.experimental_rerun()
+        except Exception:
+            pass
+
+# ...
+if st.sidebar.button("🚪 Cerrar sesión"):
+    st.session_state.clear()
+    _safe_rerun()
 
 def main():
     if not st.session_state.get("autenticado"):
