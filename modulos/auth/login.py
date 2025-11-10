@@ -1,6 +1,8 @@
 import streamlit as st
-import bcrypt
 from modulos.config.conexion import obtener_conexion
+
+def _row_to_dict(cursor, row):
+    return {d[0]: v for d, v in zip(cursor.description, row)}
 
 def _normalizar_dui(txt: str) -> str:
     return "".join(ch for ch in (txt or "") if ch.isdigit())
@@ -25,26 +27,25 @@ def login_screen():
             st.warning("Ingresa la contraseña.")
             return
 
-        # Conexión
         try:
             con = obtener_conexion()
-            # Para mysql-connector: dictionary=True
-            cur = con.cursor(dictionary=True)
         except Exception as e:
             st.error(f"Error de conexión: {e}")
             st.stop()
 
+        cur = con.cursor(dictionary=True)
+
         try:
-            # OJO: nombres EXACTOS de columnas y tabla
+            # Usamos tus nombres exactos de columnas
             sql = """
                 SELECT
                     `id_usuarios`    AS id,
                     `Nombre`         AS nombre,
                     `DUI`            AS dui,
-                    `Contraseña`     AS hash_password,
+                    `Contraseña`     AS password,
                     `Rol`            AS rol,
                     `Id_distrito`    AS distrito_id,
-                    `Id_grupo`       AS grupo_id,
+                    `Id-grupo`       AS grupo_id,
                     `Activo`         AS activo
                 FROM `usuarios`
                 WHERE REPLACE(`DUI`, '-', '') = %s
@@ -52,27 +53,30 @@ def login_screen():
             """
             cur.execute(sql, (dui,))
             data = cur.fetchone()
-            if not data:
-                st.error("Usuario no encontrado.")
-                return
+        except Exception as e:
+            st.error("Error al consultar la tabla `usuarios`. Verifica los nombres de las columnas.")
+            st.caption(f"Detalle técnico: {e}")
+            cur.close(); con.close()
+            return
 
-            if not _es_activo(data.get("activo")):
-                st.error("Usuario inactivo.")
-                return
+        if not data:
+            st.error("Usuario no encontrado.")
+            cur.close(); con.close()
+            return
 
-            # Validar contraseña (hash guardado en `Contraseña`)
-            try:
-                ok = bcrypt.checkpw(password.encode(), str(data["hash_password"]).encode())
-            except Exception as e:
-                st.error("El hash de contraseña en la BD no es válido (columna `Contraseña`).")
-                st.caption(f"Detalle técnico: {e}")
-                return
+        if not _es_activo(data.get("activo")):
+            st.error("Usuario inactivo.")
+            cur.close(); con.close()
+            return
 
-            if not ok:
-                st.error("Contraseña incorrecta.")
-                return
+        # Comparación directa de contraseña (sin hash)
+        if str(password) != str(data["password"]):
+            st.error("Contraseña incorrecta.")
+            cur.close(); con.close()
+            return
 
-            # Leer permisos por rol
+        # Cargar permisos por rol
+        try:
             cur.execute("""
                 SELECT p.clave
                 FROM `Rol_permiso` rp
@@ -80,30 +84,23 @@ def login_screen():
                 WHERE rp.rol = %s
             """, (data["rol"],))
             permisos = {r["clave"] for r in cur.fetchall()}
-
-            # Guardar sesión
-            st.session_state["user"] = {
-                "id": data["id"],
-                "nombre": data["nombre"],
-                "dui": data["dui"],
-                "rol": data["rol"],
-                "distrito_id": data.get("distrito_id"),
-                "grupo_id": data.get("grupo_id"),
-            }
-            st.session_state["permisos"] = permisos
-            st.session_state["autenticado"] = True
-
-            st.success(f"Bienvenido, {data['nombre']}")
-
         except Exception as e:
-            st.error("Ocurrió un error durante el inicio de sesión.")
+            st.error("No pude leer permisos del rol.")
             st.caption(f"Detalle técnico: {e}")
-        finally:
-            try:
-                cur.close()
-            except:
-                pass
-            try:
-                con.close()
-            except:
-                pass
+            cur.close(); con.close()
+            return
+
+        # Guardar sesión
+        st.session_state["user"] = {
+            "id": data["id"],
+            "nombre": data["nombre"],
+            "dui": data["dui"],
+            "rol": data["rol"],
+            "distrito_id": data.get("distrito_id"),
+            "grupo_id": data.get("grupo_id"),
+        }
+        st.session_state["permisos"] = permisos
+        st.session_state["autenticado"] = True
+
+        cur.close(); con.close()
+        st.success(f"Bienvenido, {data['nombre']}")
