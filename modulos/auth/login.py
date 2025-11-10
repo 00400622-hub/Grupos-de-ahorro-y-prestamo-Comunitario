@@ -1,18 +1,21 @@
 import streamlit as st, bcrypt
 from modulos.config.conexion import obtener_conexion
-from modulos.auth.rbac import set_user_session
 
-def _row_to_dict(cursor, row): 
+def _row_to_dict(cursor, row):
     return {d[0]: v for d, v in zip(cursor.description, row)}
 
 def _normalizar_dui(txt: str) -> str:
-    # deja solo dígitos (acepta con o sin guion) y valida 9 dígitos
-    digits = "".join(ch for ch in (txt or "") if ch.isdigit())
-    return digits  # "#########" (9 dígitos)
+    return "".join(ch for ch in (txt or "") if ch.isdigit())  # 9 dígitos
+
+def _es_activo(valor) -> bool:
+    if valor is None: 
+        return True  # si tu campo viene NULL, lo tratamos como activo
+    v = str(valor).strip().lower()
+    return v in {"1","si","sí","activo","true","t"}
 
 def login_screen():
     st.title("SGI GAPC — Iniciar sesión")
-    dui_in = st.text_input("DUI (sin guion)")
+    dui_in = st.text_input("DUI (con o sin guion)")
     password = st.text_input("Contraseña", type="password")
 
     if st.button("Ingresar", type="primary"):
@@ -26,10 +29,19 @@ def login_screen():
 
         con = obtener_conexion(); cur = con.cursor()
         try:
+            # OJO: usamos ALIAS para mapear tus nombres a claves estándar del sistema
             cur.execute("""
-                SELECT id, nombre, dui, hash_password, rol, distrito_id, grupo_id, activo
+                SELECT
+                    id_usuarios              AS id,
+                    Nombre                   AS nombre,
+                    DUI                      AS dui,
+                    `Contraseña`             AS hash_password,
+                    Rol                      AS rol,
+                    Id_distrito              AS distrito_id,
+                    Id_grupo                 AS grupo_id,
+                    Activo                   AS activo
                 FROM usuarios
-                WHERE REPLACE(dui, '-', '') = %s
+                WHERE REPLACE(DUI, '-', '') = %s
             """, (dui,))
             row = cur.fetchone()
             if not row:
@@ -37,24 +49,35 @@ def login_screen():
                 return
 
             data = _row_to_dict(cur, row)
-            if not data["activo"]:
+
+            if not _es_activo(data.get("activo")):
                 st.error("Usuario inactivo.")
                 return
 
-            if not bcrypt.checkpw(password.encode(), data["hash_password"].encode()):
+            if not bcrypt.checkpw(password.encode(), str(data["hash_password"]).encode()):
                 st.error("Contraseña incorrecta.")
                 return
 
-            # Cargar permisos por rol
+            # Cargar permisos por rol (tabla Rol_permiso con R mayúscula)
             cur.execute("""
                 SELECT p.clave
-                FROM rol_permiso rp
+                FROM Rol_permiso rp
                 JOIN permisos p ON p.id = rp.permiso_id
                 WHERE rp.rol = %s
             """, (data["rol"],))
             permisos = {r[0] for r in cur.fetchall()}
 
-            set_user_session(data, permisos)
+            # Guardar sesión
+            st.session_state["user"] = {
+                "id": data["id"],
+                "nombre": data["nombre"],
+                "dui": data["dui"],
+                "rol": data["rol"],
+                "distrito_id": data.get("distrito_id"),
+                "grupo_id": data.get("grupo_id"),
+            }
+            st.session_state["permisos"] = permisos
+            st.session_state["autenticado"] = True
             st.success(f"Bienvenido, {data['nombre']}")
 
         finally:
