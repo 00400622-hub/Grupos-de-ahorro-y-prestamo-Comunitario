@@ -3,16 +3,26 @@ from modulos.config.conexion import obtener_conexion
 
 
 def _normalizar_dui(txt: str) -> str:
-    """Limpia el DUI y deja solo los dígitos."""
     return "".join(ch for ch in (txt or "") if ch.isdigit())
 
 
 def _es_activo(valor) -> bool:
-    """Interpreta si el valor de 'Activo' representa un usuario activo."""
     if valor is None:
         return True
     v = str(valor).strip().lower()
     return v in {"1", "si", "sí", "activo", "true", "t"}
+
+
+def _first_match(colmap: dict[str, str], *candidates: str) -> str:
+    """
+    Devuelve el nombre REAL de la columna en la tabla, buscando entre varias variantes.
+    colmap: dict {lower_name: RealName}
+    """
+    for c in candidates:
+        real = colmap.get(c.lower())
+        if real:
+            return real
+    raise KeyError(f"No se encontró ninguna de estas columnas: {candidates}")
 
 
 def login_screen():
@@ -30,29 +40,41 @@ def login_screen():
             st.warning("Ingresa la contraseña.")
             return
 
-        # Intentar conectar con la base de datos
+        # Conexión
         try:
             con = obtener_conexion()
         except Exception as e:
             st.error(f"Error de conexión: {e}")
             st.stop()
-
         cur = con.cursor(dictionary=True)
 
-        # Buscar usuario
+        # --- Detectar nombres REALES de columnas en `usuarios`
         try:
-            sql = """
+            cur.execute("SHOW COLUMNS FROM `usuarios`")
+            ucols = {row["Field"].lower(): row["Field"] for row in cur.fetchall()}
+
+            col_id = _first_match(ucols, "id", "id_usuarios", "idusuarios", "id_usuario")
+            col_nombre = _first_match(ucols, "nombre")
+            col_dui = _first_match(ucols, "dui")
+            col_pass = _first_match(ucols, "contraseña", "contrasena", "password", "clave")
+            col_rol = _first_match(ucols, "rol")
+            col_dist = _first_match(ucols, "id_distrito", "distrito_id")
+            # ← aquí aceptamos tanto Id-grupo (con guion) como Id_grupo / grupo_id
+            col_grupo = _first_match(ucols, "id-grupo", "id_grupo", "grupo_id")
+            col_activo = _first_match(ucols, "activo", "estado")
+
+            sql = f"""
                 SELECT
-                    `id_usuarios`    AS id,
-                    `Nombre`         AS nombre,
-                    `DUI`            AS dui,
-                    `Contraseña`     AS password,
-                    `Rol`            AS rol,
-                    `Id_distrito`    AS distrito_id,
-                    `Id-grupo`       AS grupo_id,
-                    `Activo`         AS activo
+                    `{col_id}`      AS id,
+                    `{col_nombre}`  AS nombre,
+                    `{col_dui}`     AS dui,
+                    `{col_pass}`    AS password,
+                    `{col_rol}`     AS rol,
+                    `{col_dist}`    AS distrito_id,
+                    `{col_grupo}`   AS grupo_id,
+                    `{col_activo}`  AS activo
                 FROM `usuarios`
-                WHERE REPLACE(`DUI`, '-', '') = %s
+                WHERE REPLACE(`{col_dui}`, '-', '') = %s
                 LIMIT 1
             """
             cur.execute(sql, (dui,))
@@ -60,51 +82,35 @@ def login_screen():
         except Exception as e:
             st.error("Error al consultar la tabla `usuarios`. Verifica los nombres de columnas.")
             st.caption(f"Detalle técnico: {e}")
-            cur.close()
-            con.close()
+            cur.close(); con.close()
             return
 
-        # Validaciones
         if not data:
             st.error("Usuario no encontrado.")
-            cur.close()
-            con.close()
+            cur.close(); con.close()
             return
 
         if not _es_activo(data.get("activo")):
             st.error("Usuario inactivo.")
-            cur.close()
-            con.close()
+            cur.close(); con.close()
             return
 
         if str(password) != str(data["password"]):
             st.error("Contraseña incorrecta.")
-            cur.close()
-            con.close()
+            cur.close(); con.close()
             return
 
-        # Leer permisos según el rol detectando columnas
+        # --- Permisos (detección automática en permisos / Rol_permiso)
         try:
             cur.execute("SHOW COLUMNS FROM `permisos`")
             pcols = {row["Field"].lower(): row["Field"] for row in cur.fetchall()}
-
-            p_id = pcols.get("id") or pcols.get("id_permisos") or pcols.get("idpermiso") or pcols.get("id_permiso")
-            p_clave = pcols.get("clave") or pcols.get("nombre") or pcols.get("permiso") or pcols.get("descripcion")
-            if not p_id or not p_clave:
-                raise RuntimeError("No encuentro columnas 'id'/'clave' en la tabla `permisos`.")
+            p_id = _first_match(pcols, "id", "id_permisos", "id_permiso")
+            p_clave = _first_match(pcols, "clave", "nombre", "permiso", "descripcion")
 
             cur.execute("SHOW COLUMNS FROM `Rol_permiso`")
             rpcols = {row["Field"].lower(): row["Field"] for row in cur.fetchall()}
-
-            rp_permiso_id = (
-                rpcols.get("permiso_id")
-                or rpcols.get("id_permiso")
-                or rpcols.get("idpermisos")
-                or rpcols.get("id_permisos")
-            )
-            rp_rol = rpcols.get("rol") or rpcols.get("Rol") or rpcols.get("ROL")
-            if not rp_permiso_id or not rp_rol:
-                raise RuntimeError("No encuentro columnas 'permiso_id' y/o 'rol' en la tabla `Rol_permiso`.")
+            rp_permiso_id = _first_match(rpcols, "permiso_id", "id_permiso", "id_permisos")
+            rp_rol = _first_match(rpcols, "rol")
 
             sql_perm = f"""
                 SELECT p.`{p_clave}` AS clave
@@ -115,15 +121,13 @@ def login_screen():
             cur.execute(sql_perm, (data["rol"],))
             permisos = {r["clave"] for r in cur.fetchall()}
         except Exception as e:
-            st.error("No pude leer permisos del rol. Revisa las tablas `Rol_permiso` y `permisos`.")
+            st.error("No pude leer permisos del rol. Revisa `permisos` y `Rol_permiso`.")
             st.caption(f"Detalle técnico: {e}")
-            cur.close()
-            con.close()
+            cur.close(); con.close()
             return
 
-        # --- Normalizar rol a valores canónicos ---
+        # --- Normalizar rol (ADMINISTRADOR → ADMIN, etc.)
         rol_db = str(data["rol"]).strip().upper()
-
         if rol_db in ("ADMIN", "ADMINISTRADOR"):
             rol_canon = "ADMIN"
         elif rol_db in ("PROMOTORA", "PROMOTOR", "PROMOTORA DISTRITAL"):
@@ -133,7 +137,7 @@ def login_screen():
         else:
             rol_canon = rol_db
 
-        # Guardar sesión usando el rol normalizado
+        # Guardar sesión
         st.session_state["user"] = {
             "id": data["id"],
             "nombre": data["nombre"],
@@ -145,9 +149,7 @@ def login_screen():
         st.session_state["permisos"] = permisos
         st.session_state["autenticado"] = True
 
-        cur.close()
-        con.close()
+        cur.close(); con.close()
 
-        # Recargar para mostrar el panel correspondiente
         st.success(f"Bienvenido, {data['nombre']}")
         st.rerun()
