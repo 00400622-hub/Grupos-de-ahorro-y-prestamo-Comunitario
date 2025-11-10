@@ -127,5 +127,6 @@ def login_screen():
         st.session_state["permisos"] = permisos
         st.session_state["autenticado"] = True
 
-        cur.close(); con.close()
+        # Mensaje opcional y recargar la app para ir al panel del rol
         st.success(f"Bienvenido, {data['nombre']}")
+        st.rerun()  # <-- ESTA LÍNEA es la clave
