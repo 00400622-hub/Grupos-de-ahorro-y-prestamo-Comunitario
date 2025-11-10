@@ -45,7 +45,7 @@ def login_screen():
                     `Contraseña`     AS password,
                     `Rol`            AS rol,
                     `Id_distrito`    AS distrito_id,
-                    `Id-grupo`       AS grupo_id,
+                    `Id_grupo`       AS grupo_id,
                     `Activo`         AS activo
                 FROM `usuarios`
                 WHERE REPLACE(`DUI`, '-', '') = %s
