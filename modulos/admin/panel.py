@@ -1,19 +1,19 @@
 import streamlit as st
-from modulos.config.conexion import obtener_conexion
+from modulos.config.conexion import db_conn
 
-# ==============================
-# 🔧 FUNCIONES AUXILIARES
-# ==============================
-
+# ======================
+# FUNCIONES AUXILIARES
+# ======================
 def _cols(table: str) -> dict[str, str]:
     """Devuelve {lower_name: RealName} para una tabla."""
-    with obtener_conexion() as con:
+    with db_conn() as con:
         cur = con.cursor(dictionary=True)
         cur.execute(f"SHOW COLUMNS FROM `{table}`")
-        return {r["Field"].lower(): r["Field"] for r in cur.fetchall()}
+        res = {r["Field"].lower(): r["Field"] for r in cur.fetchall()}
+        cur.close()
+        return res
 
 def _pick(colmap: dict[str, str], *cands: str) -> str:
-    """Devuelve el primer nombre de columna que coincida con las opciones dadas."""
     for c in cands:
         r = colmap.get(c.lower())
         if r:
@@ -21,18 +21,16 @@ def _pick(colmap: dict[str, str], *cands: str) -> str:
     raise KeyError(f"No se encontró ninguna de estas columnas: {cands}")
 
 def _norm_dui(txt: str) -> str:
-    """Normaliza el DUI quitando guiones."""
     return "".join(ch for ch in (txt or "") if ch.isdigit())
 
-
-# ==============================
-# 🗂️ GESTIONAR DISTRITOS
-# ==============================
+# ======================
+# GESTIONAR DISTRITOS
+# ======================
 def gestionar_distritos():
     st.subheader("Distritos")
 
     try:
-        dc = _cols("distritos")           # columnas reales de distritos
+        dc = _cols("distritos")
         d_id = _pick(dc, "id", "id_distrito", "iddistrito")
         d_nombre = _pick(dc, "nombre", "name")
     except Exception as e:
@@ -42,10 +40,11 @@ def gestionar_distritos():
 
     # --- Mostrar listado ---
     try:
-        with obtener_conexion() as con:
+        with db_conn() as con:
             cur = con.cursor(dictionary=True)
             cur.execute(f"SELECT `{d_id}` AS id, `{d_nombre}` AS nombre FROM `distritos` ORDER BY `{d_id}`")
             data = cur.fetchall()
+            cur.close()
             if data:
                 st.table(data)
             else:
@@ -63,14 +62,11 @@ def gestionar_distritos():
             st.warning("Ingresa un nombre válido.")
             return
         try:
-            # Detectar si existe una columna de fecha de creación
             d_creado = dc.get("creado_en") or dc.get("creado") or dc.get("fecha_creacion")
 
-            with obtener_conexion() as con:
+            with db_conn() as con:
                 cur = con.cursor()
-
                 if d_creado:
-                    # Si existe, insertar también la fecha actual
                     cur.execute(
                         f"INSERT INTO `distritos` (`{d_nombre}`, `{d_creado}`) VALUES (%s, NOW())",
                         (nombre.strip(),),
@@ -80,8 +76,8 @@ def gestionar_distritos():
                         f"INSERT INTO `distritos` (`{d_nombre}`) VALUES (%s)",
                         (nombre.strip(),),
                     )
-
                 con.commit()
+                cur.close()
 
             st.success("✅ Distrito creado correctamente.")
             st.rerun()
@@ -90,10 +86,9 @@ def gestionar_distritos():
             st.error("No se pudo crear el distrito.")
             st.caption(f"Detalle: {e}")
 
-
-# ==============================
-# 👥 GESTIONAR USUARIOS
-# ==============================
+# ======================
+# GESTIONAR USUARIOS
+# ======================
 def gestionar_usuarios():
     st.subheader("Usuarios")
 
@@ -111,23 +106,24 @@ def gestionar_usuarios():
         st.caption(f"Detalle: {e}")
         return
 
-    # --- Formulario de creación ---
+    # --- Formulario ---
     rol = st.selectbox("Rol", ["PROMOTORA", "DIRECTIVA", "ADMIN"])
     nombre = st.text_input("Nombre completo")
     dui = st.text_input("DUI (con o sin guion)")
     password = st.text_input("Contraseña", type="password")
 
-    # Seleccionar distrito (para PROMOTORA)
+    # Distrito (si PROMOTORA)
     distrito_id = None
     if rol == "PROMOTORA":
         try:
             dc = _cols("distritos")
             d_id = _pick(dc, "id", "id_distrito", "iddistrito")
             d_nombre = _pick(dc, "nombre", "name")
-            with obtener_conexion() as con:
+            with db_conn() as con:
                 cur = con.cursor(dictionary=True)
                 cur.execute(f"SELECT `{d_id}` AS id, `{d_nombre}` AS nom FROM `distritos` ORDER BY `{d_nombre}`")
                 dists = cur.fetchall()
+                cur.close()
             opts = {f"{d['nom']} (id={d['id']})": d["id"] for d in dists}
             sel = st.selectbox("Distrito", list(opts.keys())) if opts else None
             distrito_id = opts.get(sel) if sel else None
@@ -135,7 +131,7 @@ def gestionar_usuarios():
             st.error("No pude cargar los distritos.")
             st.caption(f"Detalle: {e}")
 
-    # Seleccionar grupo (para DIRECTIVA)
+    # Grupo (si DIRECTIVA)
     grupo_id = None
     if rol == "DIRECTIVA":
         try:
@@ -143,15 +139,11 @@ def gestionar_usuarios():
             g_id = _pick(gc, "id", "id_grupo", "idgrupos")
             g_nombre = _pick(gc, "nombre", "name")
             g_distrito_fk = _pick(gc, "distrito_id", "id_distrito")
-            with obtener_conexion() as con:
+            with db_conn() as con:
                 cur = con.cursor(dictionary=True)
-                cur.execute(f"""
-                    SELECT g.`{g_id}` AS id, CONCAT(g.`{g_nombre}`, ' — ', d.`{g_distrito_fk}`) AS nom
-                    FROM `grupos` g
-                    JOIN `distritos` d ON d.`{g_distrito_fk}` = g.`{g_distrito_fk}`
-                    ORDER BY nom
-                """)
+                cur.execute(f"SELECT `{g_id}` AS id, `{g_nombre}` AS nom FROM `grupos` ORDER BY `{g_nombre}`")
                 grupos = cur.fetchall()
+                cur.close()
             og = {f"{g['nom']} (id={g['id']})": g["id"] for g in grupos}
             selg = st.selectbox("Grupo", list(og.keys())) if og else None
             grupo_id = og.get(selg) if selg else None
@@ -176,7 +168,7 @@ def gestionar_usuarios():
             return
 
         try:
-            with obtener_conexion() as con:
+            with db_conn() as con:
                 cur = con.cursor()
                 cur.execute(f"""
                     INSERT INTO `usuarios`
@@ -184,15 +176,15 @@ def gestionar_usuarios():
                     VALUES (%s, %s, %s, %s, %s, %s, '1')
                 """, (nombre.strip(), dui_digits, password.strip(), rol, distrito_id, grupo_id))
                 con.commit()
+                cur.close()
             st.success("✅ Usuario creado correctamente.")
         except Exception as e:
             st.error("No se pudo crear el usuario.")
             st.caption(f"Detalle: {e}")
 
-
-# ==============================
-# 🧭 PANEL ADMINISTRADOR
-# ==============================
+# ======================
+# PANEL ADMINISTRADOR
+# ======================
 def panel_admin():
     st.header("Panel del Administrador")
     tabs = st.tabs(["Distritos", "Usuarios"])
