@@ -2,27 +2,15 @@ import streamlit as st
 from modulos.config.conexion import db_conn
 
 
-def _normalizar_dui(txt: str) -> str:
-    return "".join(ch for ch in (txt or "") if ch.isdigit())
+def _solo_digitos(s: str) -> str:
+    return "".join(ch for ch in (s or "") if ch.isdigit())
 
 
-def _pick(colmap: dict[str, str], *cands: str) -> str:
-    """Devuelve el nombre REAL de columna (respetando mayúsculas, acentos, guiones)."""
-    for c in cands:
-        real = colmap.get(c.lower())
-        if real:
-            return real
-    raise KeyError(f"No se encontró ninguna de estas columnas: {cands}")
-
-
-def _cols(table: str) -> dict[str, str]:
-    """Mapea nombres en minúscula -> nombre real de la columna en la tabla."""
-    with db_conn() as con:
-        cur = con.cursor(dictionary=True)
-        cur.execute(f"SHOW COLUMNS FROM `{table}`")
-        res = {r["Field"].lower(): r["Field"] for r in cur.fetchall()}
-        cur.close()
-        return res
+def _esta_activo(v) -> bool:
+    if v is None:
+        return True
+    v = str(v).strip().lower()
+    return v in {"1", "si", "sí", "activo", "true"}
 
 
 def login_screen():
@@ -32,43 +20,33 @@ def login_screen():
     password = st.text_input("Contraseña", type="password")
 
     if st.button("Ingresar", type="primary"):
-        dui = _normalizar_dui(dui_in)
+        dui = _solo_digitos(dui_in)
         if len(dui) != 9:
             st.error("DUI inválido (9 dígitos).")
             return
 
         try:
-            # --- detectar nombres REALES de columnas en `usuarios`
-            uc = _cols("usuarios")
-            c_id        = _pick(uc, "id_usuarios", "id", "id_usuario", "idusuarios")
-            c_nombre    = _pick(uc, "nombre")
-            c_dui       = _pick(uc, "dui")
-            c_pass      = _pick(uc, "contraseña", "contrasena", "password", "clave")
-            c_rol       = _pick(uc, "rol")
-            c_distrito  = _pick(uc, "id_distrito", "distrito_id")
-            # aquí aceptamos tanto `Id-grupo` como `Id_grupo`/`grupo_id`
-            c_grupo     = _pick(uc, "id-grupo", "id_grupo", "grupo_id")
-            c_activo    = _pick(uc, "activo", "estado")
-
-            # --- consulta del usuario (TODOS los identificadores con backticks)
             with db_conn() as con:
                 cur = con.cursor(dictionary=True)
                 try:
-                    sql = f"""
+                    # OJO: usamos exactamente los nombres de tu tabla
+                    cur.execute(
+                        """
                         SELECT
-                          `{c_id}`       AS id,
-                          `{c_nombre}`   AS nombre,
-                          `{c_dui}`      AS dui,
-                          `{c_pass}`     AS password,
-                          `{c_rol}`      AS rol,
-                          `{c_distrito}` AS distrito_id,
-                          `{c_grupo}`    AS grupo_id,
-                          `{c_activo}`   AS activo
+                          `Id_usuarios`  AS id,
+                          `Nombre`       AS nombre,
+                          `DUI`          AS dui,
+                          `Contraseña`   AS pass,
+                          `Rol`          AS rol,
+                          `Id_distrito`  AS distrito_id,
+                          `Id_grupo`     AS grupo_id,
+                          `Activo`       AS activo
                         FROM `usuarios`
-                        WHERE REPLACE(`{c_dui}`, '-', '') = %s
+                        WHERE REPLACE(`DUI`, '-', '') = %s
                         LIMIT 1
-                    """
-                    cur.execute(sql, (dui,))
+                        """,
+                        (dui,),
+                    )
                     data = cur.fetchone()
                 finally:
                     cur.close()
@@ -77,12 +55,16 @@ def login_screen():
                 st.error("Usuario no encontrado.")
                 return
 
-            # contraseña en texto plano (como pediste)
-            if str(password) != str(data["password"]):
+            if not _esta_activo(data.get("activo")):
+                st.error("Usuario inactivo.")
+                return
+
+            # Contraseña en texto plano (como acordamos)
+            if str(password) != str(data["pass"]):
                 st.error("Contraseña incorrecta.")
                 return
 
-            # --- normalizar rol para que ADMINISTRADOR cuente como ADMIN
+            # Normalizar rol para el ruteo
             rol_db = str(data["rol"]).strip().upper()
             if rol_db in ("ADMIN", "ADMINISTRADOR"):
                 rol = "ADMIN"
@@ -93,7 +75,7 @@ def login_screen():
             else:
                 rol = rol_db
 
-            # --- guardar sesión
+            # Guardar sesión
             st.session_state["user"] = {
                 "id": data["id"],
                 "nombre": data["nombre"],
@@ -103,7 +85,8 @@ def login_screen():
                 "grupo_id": data.get("grupo_id"),
             }
             st.session_state["autenticado"] = True
-            st.success(f"Bienvenido, {data['nombre']}.")
+
+            st.success(f"Bienvenid@, {data['nombre']}.")
             st.rerun()
 
         except Exception as e:
