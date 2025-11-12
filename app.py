@@ -1,52 +1,72 @@
-import os
-import sys
+import os, sys
 import streamlit as st
 
-# =====================================
-# 🔧 Asegura que Python vea la carpeta raíz del proyecto
-# =====================================
-# Esto soluciona errores de importación en Streamlit Cloud o entornos externos
+# =========================
+# Asegurar rutas en PYTHONPATH
+# =========================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MOD_DIR  = os.path.join(BASE_DIR, "modulos")
 if BASE_DIR not in sys.path:
-    sys.path.append(BASE_DIR)
+    sys.path.insert(0, BASE_DIR)
+if os.path.isdir(MOD_DIR) and MOD_DIR not in sys.path:
+    sys.path.insert(0, MOD_DIR)   # <- fallback: permite importar "admin.panel" si falla "modulos.admin.panel"
 
-# =====================================
-# 📦 Importaciones de módulos
-# =====================================
+# =========================
+# Importar módulos con fallback
+# =========================
+def _import_with_fallback(pkg_name, attr):
+    """
+    Intenta importar 'modulos.<pkg_name>.<attr>' y si falla,
+    intenta 'pkg_name.<attr>' usando el MOD_DIR en sys.path.
+    """
+    try:
+        module = __import__(f"modulos.{pkg_name}.{attr}", fromlist=[attr])
+        return module
+    except ImportError:
+        module = __import__(f"{pkg_name}.{attr}", fromlist=[attr])
+        return module
+
 from modulos.auth.login import login_screen
-from modulos.auth.rbac import require_auth, current_user, logout_button
-from modulos.admin.panel import admin_panel
-from modulos.promotora.grupos import promotora_panel
-from modulos.directiva.panel import directiva_panel
+from modulos.auth.rbac import current_user, logout_button
 
-# =====================================
-# ⚙️ Configuración general de Streamlit
-# =====================================
-st.set_page_config(
-    page_title="SGI GAPC — Sistema de Grupos de Ahorro y Préstamo Comunitario",
-    page_icon="💠",
-    layout="wide"
-)
+# Admin
+try:
+    from modulos.admin.panel import admin_panel
+except ImportError:
+    admin_panel = _import_with_fallback("admin", "panel").admin_panel
 
-# =====================================
-# 🚀 Router principal
-# =====================================
+# Promotora
+try:
+    from modulos.promotora.grupos import promotora_panel
+except ImportError:
+    promotora_panel = _import_with_fallback("promotora", "grupos").promotora_panel
+
+# Directiva
+try:
+    from modulos.directiva.panel import directiva_panel
+except ImportError:
+    directiva_panel = _import_with_fallback("directiva", "panel").directiva_panel
+
+# =========================
+# Configuración de Streamlit
+# =========================
+st.set_page_config(page_title="SGI GAPC", page_icon="💠", layout="wide")
+
+# =========================
+# Router
+# =========================
 def router():
     user = current_user()
-
-    # Si no hay usuario en sesión, mostrar login
     if not user:
         login_screen()
         return
 
-    # Sidebar con datos de sesión y logout
     with st.sidebar:
-        st.markdown("### Sesión actual")
-        st.write(f"👤 **Usuario:** {user.get('Nombre','')}")
-        st.write(f"🧩 **Rol:** {user.get('Rol','')}")
+        st.markdown("### Sesión")
+        st.write(f"**Usuario:** {user.get('Nombre','')}")
+        st.write(f"**Rol:** {user.get('Rol','')}")
         logout_button()
 
-    # Redirección por rol
     rol = (user.get("Rol") or "").upper().strip()
     if rol == "ADMINISTRADOR":
         admin_panel()
@@ -55,10 +75,7 @@ def router():
     elif rol == "DIRECTIVA":
         directiva_panel()
     else:
-        st.error("⚠️ Rol no reconocido. Contacte al administrador del sistema.")
+        st.error("Rol no reconocido.")
 
-# =====================================
-# 🏁 Ejecución
-# =====================================
 if __name__ == "__main__":
     router()
