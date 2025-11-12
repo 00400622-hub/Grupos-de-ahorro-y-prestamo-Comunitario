@@ -1,160 +1,85 @@
 import streamlit as st
-from modulos.config.conexion import db_conn
+from datetime import date
+from modulos.auth.rbac import require_auth, has_role
+from modulos.config.conexion import fetch_all, fetch_one, execute
 
+def _titulo(p): st.markdown(f"## {p}")
 
-def _solo_digitos(s: str) -> str:
-    return "".join(ch for ch in (s or "") if ch.isdigit())
+def _validar_rol_admin():
+    require_auth()
+    if not has_role("ADMINISTRADOR"):
+        st.error("Acceso restringido al Administrador.")
+        st.stop()
 
+def _crud_distritos():
+    _titulo("Distritos")
+    st.caption("Crear y listar distritos.")
+    with st.form("form_distrito", clear_on_submit=True):
+        nombre = st.text_input("Nombre del distrito")
+        enviar = st.form_submit_button("Crear distrito")
+        if enviar:
+            if not nombre.strip():
+                st.warning("Nombre requerido.")
+            else:
+                sql = "INSERT INTO distritos (Nombre, Creado_en) VALUES (%s, %s)"
+                _, last_id = execute(sql, (nombre.strip(), date.today()))
+                st.success(f"Distrito creado (id={last_id}).")
 
-# ==============================
-# Distritos
-# ==============================
-def gestionar_distritos():
-    st.subheader("Distritos")
+    distritos = fetch_all("SELECT id_distrito, Nombre, Creado_en FROM distritos ORDER BY id_distrito DESC")
+    st.dataframe(distritos, use_container_width=True)
+
+def _crear_promotora():
+    _titulo("Promotoras")
+    st.caption("Crear cuentas de promotora y asignarlas a un distrito (1 por distrito).")
+
+    distritos = fetch_all("SELECT id_distrito, Nombre FROM distritos ORDER BY Nombre ASC")
+    mapa = {f"{d['Nombre']} (id {d['id_distrito']})": d["id_distrito"] for d in distritos}
+    nombres = list(mapa.keys())
+
+    with st.form("form_promotora", clear_on_submit=True):
+        nombre = st.text_input("Nombre de la promotora")
+        dui = st.text_input("DUI")
+        contr = st.text_input("Contraseña inicial", type="password")
+        distrito_sel = st.selectbox("Distrito", nombres) if nombres else None
+        crear = st.form_submit_button("Crear promotora")
+
+        if crear:
+            if not (nombre and dui and contr and distrito_sel):
+                st.warning("Complete todos los campos.")
+            else:
+                id_distrito = mapa[distrito_sel]
+                # Enforzar 1 promotora por distrito
+                existente = fetch_one("SELECT id_usuarios FROM usuarios WHERE Rol='PROMOTORA' AND id_distrito=%s LIMIT 1", (id_distrito,))
+                if existente:
+                    st.error("Ya existe una promotora para ese distrito.")
+                else:
+                    sql = """
+                        INSERT INTO usuarios (Nombre, DUI, Contraseña, Rol, id_distrito, Activo, Creado_en)
+                        VALUES (%s, %s, %s, 'PROMOTORA', %s, '1', %s)
+                    """
+                    _, uid = execute(sql, (nombre, dui, contr, id_distrito, date.today()))
+                    st.success(f"Promotora creada (id={uid}) para el distrito {id_distrito}.")
 
     # Listado
-    try:
-        with db_conn() as con:
-            cur = con.cursor(dictionary=True)
-            cur.execute(
-                """
-                SELECT `Id_distrito` AS id, `Nombre` AS nombre, `Creado_en` AS creado
-                FROM `distritos`
-                ORDER BY `Id_distrito`
-                """
-            )
-            filas = cur.fetchall()
-            cur.close()
+    prom = fetch_all("""
+        SELECT u.id_usuarios, u.Nombre, u.DUI, u.id_distrito, d.Nombre AS Distrito
+        FROM usuarios u
+        LEFT JOIN distritos d ON d.id_distrito = u.id_distrito
+        WHERE u.Rol='PROMOTORA'
+        ORDER BY d.Nombre, u.Nombre
+    """)
+    st.dataframe(prom, use_container_width=True)
 
-        if filas:
-            st.table(filas)
-        else:
-            st.markdown("_empty_")
+def _reportes_globales():
+    _titulo("Reportes globales")
+    st.info("Aquí puedes agregar KPIs globales, totales por distrito y cartera consolidada.\nDe momento es un placeholder.")
 
-    except Exception as e:
-        st.error("No pude consultar los distritos.")
-        st.caption(f"Detalle: {e}")
-
-    # Crear
-    st.markdown("**Crear nuevo distrito**")
-    nombre = st.text_input("Nombre del distrito", key="nuevo_distrito")
-
-    if st.button("Crear distrito", type="primary"):
-        if not nombre.strip():
-            st.warning("Ingresa un nombre válido.")
-            return
-
-        try:
-            with db_conn() as con:
-                cur = con.cursor()
-                # Tu columna 'Creado_en' es DATE -> usamos CURDATE()
-                cur.execute(
-                    "INSERT INTO `distritos` (`Nombre`, `Creado_en`) VALUES (%s, CURDATE())",
-                    (nombre.strip(),),
-                )
-                con.commit()
-                cur.close()
-
-            st.success("Distrito creado.")
-            st.rerun()
-
-        except Exception as e:
-            st.error("No se pudo crear el distrito.")
-            st.caption(f"Detalle: {e}")
-
-
-# ==============================
-# Usuarios
-# ==============================
-def gestionar_usuarios():
-    st.subheader("Usuarios")
-
-    # Formulario
-    rol = st.selectbox("Rol", ["PROMOTORA", "DIRECTIVA", "ADMIN"])
-    nombre = st.text_input("Nombre completo")
-    dui = st.text_input("DUI (con o sin guion)")
-    password = st.text_input("Contraseña", type="password")
-
-    # Seleccionar distrito (para PROMOTORA)
-    distrito_id = None
-    if rol == "PROMOTORA":
-        try:
-            with db_conn() as con:
-                cur = con.cursor(dictionary=True)
-                cur.execute(
-                    "SELECT `Id_distrito` AS id, `Nombre` AS nom FROM `distritos` ORDER BY `Nombre`"
-                )
-                dists = cur.fetchall()
-                cur.close()
-            opts = {f"{d['nom']} (id={d['id']})": d["id"] for d in dists}
-            sel = st.selectbox("Distrito", list(opts.keys())) if opts else None
-            distrito_id = opts.get(sel) if sel else None
-        except Exception as e:
-            st.error("No pude cargar distritos.")
-            st.caption(f"Detalle: {e}")
-
-    # Seleccionar grupo (para DIRECTIVA) — si aún no tienes tabla grupos poblada, puedes omitir
-    grupo_id = None
-    if rol == "DIRECTIVA":
-        try:
-            with db_conn() as con:
-                cur = con.cursor(dictionary=True)
-                cur.execute(
-                    "SELECT `Id_grupo` AS id, `Nombre` AS nom FROM `grupos` ORDER BY `Nombre`"
-                )
-                grupos = cur.fetchall()
-                cur.close()
-            og = {f"{g['nom']} (id={g['id']})": g["id"] for g in grupos}
-            selg = st.selectbox("Grupo", list(og.keys())) if og else None
-            grupo_id = og.get(selg) if selg else None
-        except Exception as e:
-            # Si no existe o está vacía, no bloquees la pantalla
-            st.info("Aún no hay grupos cargados o la tabla no existe.")
-            st.caption(f"Detalle (opcional): {e}")
-
-    # Guardar
-    if st.button("Guardar usuario", type="primary"):
-        dui_digits = _solo_digitos(dui)
-        if not all([nombre.strip(), dui_digits, password.strip()]):
-            st.warning("Completa nombre, DUI y contraseña.")
-            return
-        if len(dui_digits) != 9:
-            st.warning("DUI inválido (9 dígitos).")
-            return
-        if rol == "PROMOTORA" and not distrito_id:
-            st.warning("Selecciona un distrito.")
-            return
-        if rol == "DIRECTIVA" and not grupo_id:
-            st.warning("Selecciona un grupo.")
-            return
-
-        try:
-            with db_conn() as con:
-                cur = con.cursor()
-                cur.execute(
-                    """
-                    INSERT INTO `usuarios`
-                       (`Nombre`, `DUI`, `Contraseña`, `Rol`, `Id_distrito`, `Id_grupo`, `Activo`, `Creado_en`)
-                    VALUES (%s, %s, %s, %s, %s, %s, '1', CURDATE())
-                    """,
-                    (nombre.strip(), dui_digits, password.strip(), rol, distrito_id, grupo_id),
-                )
-                con.commit()
-                cur.close()
-
-            st.success("Usuario creado.")
-        except Exception as e:
-            st.error("No se pudo crear el usuario.")
-            st.caption(f"Detalle: {e}")
-
-
-# ==============================
-# Panel del Administrador
-# ==============================
-def panel_admin():
-    st.header("Panel del Administrador")
-    tabs = st.tabs(["Distritos", "Usuarios"])
+def admin_panel():
+    _validar_rol_admin()
+    tabs = st.tabs(["Distritos", "Promotoras", "Reportes globales"])
     with tabs[0]:
-        gestionar_distritos()
+        _crud_distritos()
     with tabs[1]:
-        gestionar_usuarios()
+        _crear_promotora()
+    with tabs[2]:
+        _reportes_globales()
