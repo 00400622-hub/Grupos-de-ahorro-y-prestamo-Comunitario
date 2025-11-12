@@ -1,70 +1,32 @@
 import streamlit as st
 from modulos.auth.login import login_screen
-from modulos.admin.panel import panel_admin
-from modulos.promotora.grupos import listado_grupos_distrito
-from modulos.directiva.panel import panel_directiva
+from modulos.auth.rbac import require_auth, current_user, logout_button
+from modulos.admin.panel import admin_panel
+from modulos.promotora.grupos import promotora_panel
+from modulos.directiva.panel import directiva_panel
 
-
-# ⚙️ Configuración general de la app
 st.set_page_config(page_title="SGI GAPC", page_icon="💠", layout="wide")
 
-
-# 🔄 Función auxiliar compatible con distintas versiones de Streamlit
-def _safe_rerun():
-    """Intenta recargar la app, compatible con versiones nuevas y viejas de Streamlit."""
-    try:
-        st.rerun()
-    except Exception:
-        try:
-            st.experimental_rerun()
-        except Exception:
-            pass
-
-
-# 🎛️ Menú lateral (panel por tipo de usuario)
-def sidebar_menu():
-    user = st.session_state.get("user")
+def router():
+    user = current_user()
     if not user:
+        login_screen()
         return
 
-    # --- Información del usuario ---
-    st.sidebar.title(f"👋 Hola, {user['nombre']}")
-    st.sidebar.write(f"Rol: **{user['rol']}**")
+    with st.sidebar:
+        st.markdown("### Sesión")
+        st.write(f"**Usuario:** {user.get('Nombre','')}  \n**Rol:** {user.get('Rol','')}")
+        logout_button()
 
-    # --- Panel para el Administrador ---
-    if user["rol"] == "ADMIN":
-        panel_admin()
-
-    # --- Panel para la Promotora ---
-    elif user["rol"] == "PROMOTORA":
-        sel = st.sidebar.radio("Menú", ["Grupos del distrito", "Reportes del distrito"])
-        if sel == "Grupos del distrito":
-            listado_grupos_distrito()
-        else:
-            st.info("📊 Reportes del distrito (pendiente).")
-
-    # --- Panel para la Directiva ---
-    elif user["rol"] == "DIRECTIVA":
-        sel = st.sidebar.radio("Menú", ["Mi grupo", "Reportes del grupo"])
-        if sel == "Mi grupo":
-            panel_directiva()
-        else:
-            st.info("📄 Reportes del grupo (pendiente).")
-
-    # --- Botón de cierre de sesión ---
-    if st.sidebar.button("🚪 Cerrar sesión"):
-        st.session_state.clear()
-        _safe_rerun()
-
-
-# 🚀 Punto de entrada principal
-def main():
-    if not st.session_state.get("autenticado"):
-        login_screen()
+    rol = user.get("Rol", "").upper().strip()
+    if rol == "ADMINISTRADOR":
+        admin_panel()
+    elif rol == "PROMOTORA":
+        promotora_panel()
+    elif rol == "DIRECTIVA":
+        directiva_panel()
     else:
-        sidebar_menu()
+        st.error("Rol no reconocido. Contacte al administrador.")
 
-
-# 🧩 Ejecutar la aplicación
 if __name__ == "__main__":
-    main()
+    router()
