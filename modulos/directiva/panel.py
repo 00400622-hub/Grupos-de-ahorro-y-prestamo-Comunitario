@@ -1,33 +1,27 @@
 import streamlit as st
-from modulos.config.conexion import obtener_conexion
+from modulos.auth.rbac import require_auth, has_role, current_user
+from modulos.config.conexion import fetch_one
 
-def panel_directiva():
-    st.header("🏛 Panel de la Directiva — Mi Grupo")
-    grupo_id = st.session_state["user"]["grupo_id"]
+def _validar_rol_directiva():
+    require_auth()
+    if not has_role("DIRECTIVA"):
+        st.error("Acceso restringido a Directiva.")
+        st.stop()
 
-    if not grupo_id:
-        st.error("❌ No hay grupo asignado a esta cuenta.")
+def directiva_panel():
+    _validar_rol_directiva()
+    u = current_user()
+    id_grupo = u.get("id_grupo")
+
+    st.markdown("## Panel Directiva")
+    if not id_grupo:
+        st.error("No hay grupo asignado a esta cuenta de Directiva.")
         return
 
-    with obtener_conexion() as con:
-        cur = con.cursor(dictionary=True)
-        cur.execute("""
-            SELECT g.id, g.nombre, g.estado, d.nombre AS distrito
-            FROM grupos g
-            JOIN distritos d ON d.id = g.distrito_id
-            WHERE g.id = %s
-        """, (grupo_id,))
-        grupo = cur.fetchone()
+    grupo = fetch_one("SELECT id_grupo, Nombre, id_distrito FROM grupos WHERE id_grupo=%s", (id_grupo,))
+    if grupo:
+        st.write(f"**Grupo:** {grupo['Nombre']} (id {grupo['id_grupo']}) — **Distrito:** {grupo['id_distrito']}")
+    else:
+        st.error("No se encontró el grupo asignado.")
 
-    if not grupo:
-        st.error("Grupo no encontrado.")
-        return
-
-    st.markdown(f"""
-    **Nombre del grupo:** {grupo['nombre']}  
-    **Distrito:** {grupo['distrito']}  
-    **Estado:** {grupo['estado']}
-    """)
-
-    st.info("Aquí podrás registrar reuniones, asistencias, multas, ahorros, préstamos y reportes del grupo.")
-
+    st.info("Aquí agregaremos: registro de reuniones, asistencia, ahorros, préstamos, pagos, multas y caja.\nPor ahora, panel base funcionando con alcance restringido al grupo.")
