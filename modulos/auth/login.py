@@ -1,94 +1,61 @@
 import streamlit as st
-from modulos.config.conexion import db_conn
+import bcrypt
+from modulos.config.conexion import fetch_one
+from modulos.auth.rbac import set_user
 
-
-def _solo_digitos(s: str) -> str:
-    return "".join(ch for ch in (s or "") if ch.isdigit())
-
-
-def _esta_activo(v) -> bool:
-    if v is None:
-        return True
-    v = str(v).strip().lower()
-    return v in {"1", "si", "sí", "activo", "true"}
-
+def _check_password(plain: str, hashed_or_plain_from_db: str) -> bool:
+    """Soporta contraseña hasheada (bcrypt) y plano (compatibilidad)."""
+    if not hashed_or_plain_from_db:
+        return False
+    stored = hashed_or_plain_from_db.encode("utf-8")
+    try:
+        # Si ya es hash bcrypt
+        if hashed_or_plain_from_db.startswith("$2b$") or hashed_or_plain_from_db.startswith("$2a$"):
+            return bcrypt.checkpw(plain.encode("utf-8"), stored)
+        # Si está en texto plano (migración)
+        return plain == hashed_or_plain_from_db
+    except Exception:
+        return False
 
 def login_screen():
     st.title("SGI GAPC — Iniciar sesión")
 
-    dui_in = st.text_input("DUI (con o sin guion)")
+    dui_in = st.text_input("DUI (sin guion o con guion, como esté en BD)")
     password = st.text_input("Contraseña", type="password")
 
     if st.button("Ingresar", type="primary"):
-        dui = _solo_digitos(dui_in)
-        if len(dui) != 9:
-            st.error("DUI inválido (9 dígitos).")
+        if not dui_in or not password:
+            st.warning("Ingrese DUI y contraseña.")
             return
 
-        try:
-            with db_conn() as con:
-                cur = con.cursor(dictionary=True)
-                try:
-                    # OJO: usamos exactamente los nombres de tu tabla
-                    cur.execute(
-                        """
-                        SELECT
-                          `Id_usuarios`  AS id,
-                          `Nombre`       AS nombre,
-                          `DUI`          AS dui,
-                          `Contraseña`   AS pass,
-                          `Rol`          AS rol,
-                          `Id_distrito`  AS distrito_id,
-                          `Id_grupo`     AS grupo_id,
-                          `Activo`       AS activo
-                        FROM `usuarios`
-                        WHERE REPLACE(`DUI`, '-', '') = %s
-                        LIMIT 1
-                        """,
-                        (dui,),
-                    )
-                    data = cur.fetchone()
-                finally:
-                    cur.close()
+        # Busca por DUI (tabla: usuarios, columnas exactas de tu BD)
+        sql = """
+            SELECT id_usuarios, Nombre, DUI, Contraseña, Rol, id_distrito, id_grupo, Activo
+            FROM usuarios
+            WHERE DUI = %s
+            LIMIT 1
+        """
+        user = fetch_one(sql, (dui_in,))
+        if not user:
+            st.error("Usuario no encontrado.")
+            return
 
-            if not data:
-                st.error("Usuario no encontrado.")
-                return
+        if str(user.get("Activo", "")).strip() not in {"1", "si", "sí", "SI", "true", "True"}:
+            st.error("Usuario inactivo.")
+            return
 
-            if not _esta_activo(data.get("activo")):
-                st.error("Usuario inactivo.")
-                return
+        if not _check_password(password, user["Contraseña"] or ""):
+            st.error("Credenciales inválidas.")
+            return
 
-            # Contraseña en texto plano (como acordamos)
-            if str(password) != str(data["pass"]):
-                st.error("Contraseña incorrecta.")
-                return
-
-            # Normalizar rol para el ruteo
-            rol_db = str(data["rol"]).strip().upper()
-            if rol_db in ("ADMIN", "ADMINISTRADOR"):
-                rol = "ADMIN"
-            elif rol_db in ("PROMOTORA", "PROMOTOR", "PROMOTORA DISTRITAL"):
-                rol = "PROMOTORA"
-            elif rol_db in ("DIRECTIVA", "PRESIDENTE", "SECRETARIA"):
-                rol = "DIRECTIVA"
-            else:
-                rol = rol_db
-
-            # Guardar sesión
-            st.session_state["user"] = {
-                "id": data["id"],
-                "nombre": data["nombre"],
-                "dui": data["dui"],
-                "rol": rol,
-                "distrito_id": data.get("distrito_id"),
-                "grupo_id": data.get("grupo_id"),
-            }
-            st.session_state["autenticado"] = True
-
-            st.success(f"Bienvenid@, {data['nombre']}.")
-            st.rerun()
-
-        except Exception as e:
-            st.error("Error al consultar la base de datos.")
-            st.caption(f"Detalle: {e}")
+        # Guarda en sesión lo necesario para el alcance
+        set_user({
+            "id_usuarios": user["id_usuarios"],
+            "Nombre": user["Nombre"],
+            "DUI": user["DUI"],
+            "Rol": (user["Rol"] or "").upper().strip(),
+            "id_distrito": user.get("id_distrito"),
+            "id_grupo": user.get("id_grupo"),
+        })
+        st.success("Ingreso exitoso.")
+        st.rerun()
