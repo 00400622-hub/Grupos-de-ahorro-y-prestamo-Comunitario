@@ -4,15 +4,13 @@ from modulos.config.conexion import fetch_one
 from modulos.auth.rbac import set_user
 
 def _check_password(plain: str, hashed_or_plain_from_db: str) -> bool:
-    """Soporta contraseña hasheada (bcrypt) y plano (compatibilidad)."""
     if not hashed_or_plain_from_db:
         return False
     stored = hashed_or_plain_from_db.encode("utf-8")
     try:
-        # Si ya es hash bcrypt
+        # Soporta bcrypt o texto plano
         if hashed_or_plain_from_db.startswith("$2b$") or hashed_or_plain_from_db.startswith("$2a$"):
             return bcrypt.checkpw(plain.encode("utf-8"), stored)
-        # Si está en texto plano (migración)
         return plain == hashed_or_plain_from_db
     except Exception:
         return False
@@ -20,7 +18,7 @@ def _check_password(plain: str, hashed_or_plain_from_db: str) -> bool:
 def login_screen():
     st.title("SGI GAPC — Iniciar sesión")
 
-    dui_in = st.text_input("DUI (sin guion o con guion, como esté en BD)")
+    dui_in = st.text_input("DUI")
     password = st.text_input("Contraseña", type="password")
 
     if st.button("Ingresar", type="primary"):
@@ -28,11 +26,13 @@ def login_screen():
             st.warning("Ingrese DUI y contraseña.")
             return
 
-        # Busca por DUI (tabla: usuarios, columnas exactas de tu BD)
+        # OJO: nombres exactos de tabla y columnas
         sql = """
-            SELECT id_usuarios, Nombre, DUI, Contraseña, Rol, id_distrito, id_grupo, Activo
-            FROM usuarios
-            WHERE DUI = %s
+            SELECT u.Id_usuario, u.Nombre, u.DUI, u.Contraseña, u.Id_rol,
+                   r.`Tipo de rol` AS RolNombre
+            FROM Usuario u
+            JOIN rol r ON r.Id_rol = u.Id_rol
+            WHERE u.DUI = %s
             LIMIT 1
         """
         user = fetch_one(sql, (dui_in,))
@@ -40,22 +40,17 @@ def login_screen():
             st.error("Usuario no encontrado.")
             return
 
-        if str(user.get("Activo", "")).strip() not in {"1", "si", "sí", "SI", "true", "True"}:
-            st.error("Usuario inactivo.")
-            return
-
         if not _check_password(password, user["Contraseña"] or ""):
             st.error("Credenciales inválidas.")
             return
 
-        # Guarda en sesión lo necesario para el alcance
+        # Guardamos lo que necesitamos en sesión
         set_user({
-            "id_usuarios": user["id_usuarios"],
+            "Id_usuario": user["Id_usuario"],
             "Nombre": user["Nombre"],
             "DUI": user["DUI"],
-            "Rol": (user["Rol"] or "").upper().strip(),
-            "id_distrito": user.get("id_distrito"),
-            "id_grupo": user.get("id_grupo"),
+            "id_rol": user["Id_rol"],
+            "Rol": (user["RolNombre"] or "").upper().strip(),  # ADMINISTRADOR / PROMOTORA / DIRECTIVA
         })
         st.success("Ingreso exitoso.")
         st.rerun()
