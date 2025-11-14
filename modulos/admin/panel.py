@@ -1,12 +1,6 @@
 import streamlit as st
-from datetime import date
-import mysql.connector
 from modulos.config.conexion import fetch_all, fetch_one, execute
 from modulos.auth.rbac import require_auth, has_role
-
-# ---------- utilidades ----------
-def _titulo(txt): 
-    st.markdown(f"## {txt}")
 
 def _solo_admin():
     require_auth()
@@ -14,7 +8,10 @@ def _solo_admin():
         st.error("Acceso restringido al Administrador.")
         st.stop()
 
-# ---------- secciones ----------
+def _titulo(txt):
+    st.markdown(f"## {txt}")
+
+# -------- Distritos (si sigues usando la tabla 'distritos') ----------
 def _crud_distritos():
     _titulo("Distritos")
     st.caption("Crear y listar distritos.")
@@ -28,7 +25,6 @@ def _crud_distritos():
             if not nom:
                 st.warning("Nombre requerido.")
             else:
-                # evita duplicados por nombre (case-insensitive)
                 existe = fetch_one(
                     "SELECT id_distrito FROM distritos WHERE LOWER(Nombre)=LOWER(%s) LIMIT 1",
                     (nom,)
@@ -36,73 +32,65 @@ def _crud_distritos():
                 if existe:
                     st.error("Ya existe un distrito con ese nombre.")
                 else:
-                    try:
-                        sql = "INSERT INTO distritos (Nombre) VALUES (%s)"
-                        _, last_id = execute(sql, (nom,))
-                        st.success(f"Distrito creado (id={last_id}).")
-                    except mysql.connector.IntegrityError as e:
-                        st.error(f"Error de integridad MySQL [{e.errno}]: {e.msg}")
-                    except Exception as e:
-                        st.exception(e)
+                    sql = "INSERT INTO distritos (Nombre) VALUES (%s)"
+                    _, last_id = execute(sql, (nom,))
+                    st.success(f"Distrito creado (id={last_id}).")
 
     distritos = fetch_all("SELECT id_distrito, Nombre FROM distritos ORDER BY id_distrito DESC")
     st.dataframe(distritos, use_container_width=True)
 
-def _crear_promotora():
-    _titulo("Promotoras")
-    st.caption("Crear cuentas de promotora y asignarlas a un distrito (1 por distrito).")
+# -------- Usuarios / Roles ----------
+def _crud_usuarios():
+    _titulo("Usuarios")
+    st.caption("Crear usuarios seleccionando el rol desde la tabla 'rol'.")
 
-    distritos = fetch_all("SELECT id_distrito, Nombre FROM distritos ORDER BY Nombre ASC")
-    mapa = {f"{d['Nombre']} (id {d['id_distrito']})": d["id_distrito"] for d in distritos}
-    nombres = list(mapa.keys())
+    # Cargar roles desde tabla rol
+    roles = fetch_all("SELECT Id_rol, `Tipo de rol` FROM rol ORDER BY `Tipo de rol`")
+    opciones = {r["Tipo de rol"]: r["Id_rol"] for r in roles}
 
-    with st.form("form_promotora", clear_on_submit=True):
-        nombre = st.text_input("Nombre de la promotora")
+    with st.form("form_usuario", clear_on_submit=True):
+        nombre = st.text_input("Nombre del usuario")
         dui = st.text_input("DUI")
-        contr = st.text_input("Contraseña inicial", type="password")
-        distrito_sel = st.selectbox("Distrito", nombres) if nombres else None
-        crear = st.form_submit_button("Crear promotora")
+        contr = st.text_input("Contraseña (sin cifrar por ahora)")
+        rol_sel = st.selectbox("Tipo de rol", list(opciones.keys())) if opciones else None
+        enviar = st.form_submit_button("Crear usuario")
 
-        if crear:
-            if not (nombre and dui and contr and distrito_sel):
+        if enviar:
+            if not (nombre and dui and contr and rol_sel):
                 st.warning("Complete todos los campos.")
             else:
-                id_distrito = mapa[distrito_sel]
-                existente = fetch_one(
-                    "SELECT id_usuarios FROM usuarios WHERE Rol='PROMOTORA' AND id_distrito=%s LIMIT 1",
-                    (id_distrito,)
-                )
-                if existente:
-                    st.error("Ya existe una promotora para ese distrito.")
+                id_rol = opciones[rol_sel]
+                # evitar DUI duplicado
+                existe = fetch_one("SELECT Id_usuario FROM Usuario WHERE DUI=%s LIMIT 1", (dui,))
+                if existe:
+                    st.error("Ya existe un usuario con ese DUI.")
                 else:
                     sql = """
-                        INSERT INTO usuarios (Nombre, DUI, Contraseña, Rol, id_distrito, Activo, Creado_en)
-                        VALUES (%s, %s, %s, 'PROMOTORA', %s, '1', %s)
+                        INSERT INTO Usuario (Nombre, DUI, Contraseña, Id_rol)
+                        VALUES (%s, %s, %s, %s)
                     """
-                    _, uid = execute(sql, (nombre, dui, contr, id_distrito, date.today()))
-                    st.success(f"Promotora creada (id={uid}) para el distrito {id_distrito}.")
+                    _, uid = execute(sql, (nombre, dui, contr, id_rol))
+                    st.success(f"Usuario creado con id={uid} y rol={rol_sel}.")
 
-    prom = fetch_all("""
-        SELECT u.id_usuarios, u.Nombre, u.DUI, u.id_distrito, d.Nombre AS Distrito
-        FROM usuarios u
-        LEFT JOIN distritos d ON d.id_distrito = u.id_distrito
-        WHERE u.Rol='PROMOTORA'
-        ORDER BY d.Nombre, u.Nombre
+    # Listado de usuarios con su rol
+    usuarios = fetch_all("""
+        SELECT u.Id_usuario, u.Nombre, u.DUI, r.`Tipo de rol` AS Rol
+        FROM Usuario u
+        LEFT JOIN rol r ON r.Id_rol = u.Id_rol
+        ORDER BY u.Id_usuario DESC
     """)
-    st.dataframe(prom, use_container_width=True)
+    st.dataframe(usuarios, use_container_width=True)
 
 def _reportes_globales():
     _titulo("Reportes globales")
-    st.info("Placeholder de KPIs globales, totales por distrito y cartera consolidada.")
+    st.info("Aquí más adelante puedes agregar reportes globales del sistema.")
 
-# ---------- punto de entrada del panel de ADMIN ----------
 def admin_panel():
-    """Función que importa app.py — ¡debe existir con este nombre!"""
     _solo_admin()
-    tabs = st.tabs(["Distritos", "Promotoras", "Reportes globales"])
+    tabs = st.tabs(["Distritos", "Usuarios", "Reportes globales"])
     with tabs[0]:
         _crud_distritos()
     with tabs[1]:
-        _crear_promotora()
+        _crud_usuarios()
     with tabs[2]:
         _reportes_globales()
