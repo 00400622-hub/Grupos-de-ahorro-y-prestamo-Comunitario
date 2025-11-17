@@ -32,6 +32,25 @@ def _crear_grupo():
 
     dui = (usuario.get("DUI") or "").strip()
     nombre_usuario = usuario.get("Nombre") or ""
+    id_usuario = usuario.get("Id_usuario")
+
+    if not dui:
+        st.error("El usuario actual no tiene DUI registrado.")
+        st.stop()
+
+    # Buscar a la promotora en la tabla 'promotora' usando el DUI
+    promotora = fetch_one(
+        "SELECT Id_promotora, Nombre FROM promotora WHERE DUI = %s LIMIT 1",
+        (dui,)
+    )
+    if not promotora:
+        st.error(
+            f"No se encontró una promotora en la tabla 'promotora' para el DUI {dui}. "
+            "Primero debe registrarse esa promotora en la tabla 'promotora'."
+        )
+        st.stop()
+
+    id_promotora = promotora["Id_promotora"]
 
     # Cargar distritos creados por el Administrador
     distritos = fetch_all(
@@ -73,13 +92,8 @@ def _crear_grupo():
                 st.warning("Debe ingresar el nombre del grupo.")
                 return
 
-            if not dui:
-                st.error("El usuario actual no tiene DUI registrado.")
-                return
-
             id_distrito = opciones_dist[sel_dist]
             hoy = date.today()
-            id_usuario = usuario.get("Id_usuario")
 
             # evitar duplicado: mismo nombre en el mismo distrito
             existe = fetch_one(
@@ -96,16 +110,29 @@ def _crear_grupo():
                 st.error("Ya existe un grupo con ese nombre en ese distrito.")
                 return
 
-            # IMPORTANTE: guardamos el DUI de la promotora en DUIs_promotoras
-            # y también, si lo tienes, el Id_usuario como Creado_por
+            # IMPORTANTE: incluimos Id_promotora y DUIs_promotoras
             sql = """
                 INSERT INTO grupos
-                    (Nombre, Id_distrito, Estado, Creado_por, Creado_en, DUIs_promotoras)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                    (Nombre,
+                     Id_distrito,
+                     Estado,
+                     Creado_por,
+                     Creado_en,
+                     Id_promotora,
+                     DUIs_promotoras)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
             """
             _, gid = execute(
                 sql,
-                (nom, id_distrito, "ACTIVO", id_usuario, hoy, dui)
+                (
+                    nom,
+                    id_distrito,
+                    "ACTIVO",
+                    id_usuario,
+                    hoy,
+                    id_promotora,
+                    dui,           # primer DUI asignado al grupo
+                )
             )
             st.success(f"Grupo creado correctamente (Id_grupo={gid}).")
 
@@ -201,7 +228,6 @@ def _mis_grupos():
 
     st.markdown("### Editar promotoras (DUIs) asignadas al grupo")
 
-    # Diccionario con info completa del grupo
     grupos_dict = {
         f"{g['Id_grupo']} - {g['Nombre']}": g for g in grupos
     }
