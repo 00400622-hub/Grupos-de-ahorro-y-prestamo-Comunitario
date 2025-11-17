@@ -77,7 +77,6 @@ def _crear_grupo():
             creado_por = usuario.get("Id_usuario") if usuario else None
             hoy = date.today()
 
-            # Ajusta los nombres de columnas si tu tabla 'grupos' es distinta
             sql = """
                 INSERT INTO grupos (Nombre, Id_distrito, Estado, Creado_por, Creado_en)
                 VALUES (%s, %s, %s, %s, %s)
@@ -86,13 +85,11 @@ def _crear_grupo():
             st.success(f"Grupo creado correctamente (Id_grupo={gid}).")
 
 
-# ----------------- MIS GRUPOS ----------------- #
+# ----------------- MIS GRUPOS (listar + eliminar) ----------------- #
 
 def _mis_grupos():
     _titulo("Mis grupos")
 
-    # Por ahora mostramos todos los grupos con su distrito
-    # (luego se puede filtrar por promotora si lo deseas)
     grupos = fetch_all(
         """
         SELECT g.Id_grupo,
@@ -108,8 +105,50 @@ def _mis_grupos():
 
     if not grupos:
         st.info("Todavía no hay grupos registrados.")
-    else:
-        st.dataframe(grupos, use_container_width=True)
+        return
+
+    st.subheader("Listado de grupos")
+    st.dataframe(grupos, use_container_width=True)
+
+    st.markdown("### Eliminar grupo")
+
+    # opciones para el select
+    opciones_grupo = {
+        f"{g['Id_grupo']} - {g['Nombre']} ({g['Distrito'] or 'SIN DISTRITO'})": g["Id_grupo"]
+        for g in grupos
+    }
+
+    with st.form("form_eliminar_grupo"):
+        sel = st.selectbox(
+            "Seleccione el grupo a eliminar",
+            list(opciones_grupo.keys())
+        )
+        confirmar = st.checkbox(
+            "Confirmo que deseo eliminar este grupo (no se puede deshacer)."
+        )
+        eliminar = st.form_submit_button("Eliminar grupo", type="secondary")
+
+        if eliminar:
+            if not confirmar:
+                st.warning("Debes marcar la casilla de confirmación.")
+            else:
+                id_sel = opciones_grupo[sel]
+                try:
+                    sql = "DELETE FROM grupos WHERE Id_grupo = %s"
+                    filas, _ = execute(sql, (id_sel,))
+                    if filas > 0:
+                        st.success(f"Grupo {sel} eliminado correctamente.")
+                        st.rerun()
+                    else:
+                        st.warning("No se encontró el grupo seleccionado.")
+                except Exception as e:
+                    # Si luego pones FKs desde otras tablas, aquí podrías
+                    # capturar mysql.connector.IntegrityError específicamente
+                    st.error(
+                        "No se puede eliminar el grupo porque está siendo usado "
+                        "por otros registros."
+                    )
+                    st.exception(e)
 
 
 # ----------------- CREAR DIRECTIVA (placeholder) ----------------- #
@@ -136,7 +175,7 @@ def promotora_panel():
     )
 
     with tab1:
-        _crear_grupo()        # <-- SIN parámetros
+        _crear_grupo()
     with tab2:
         _mis_grupos()
     with tab3:
