@@ -1,92 +1,145 @@
 import streamlit as st
 from datetime import date
-from modulos.auth.rbac import require_auth, has_role, current_user
-from modulos.config.conexion import fetch_all, fetch_one, execute
 
-def _validar_rol_promotora():
+from modulos.config.conexion import fetch_all, fetch_one, execute
+from modulos.auth.rbac import require_auth, has_role, current_user
+
+
+# ----------------- helpers básicos ----------------- #
+
+def _solo_promotora():
+    """Restringe el acceso solo a usuarios con rol PROMOTORA."""
     require_auth()
     if not has_role("PROMOTORA"):
-        st.error("Acceso restringido a Promotora.")
+        st.error("Acceso restringido a Promotoras.")
         st.stop()
 
-def _crear_grupo(id_distrito):
-    st.subheader("Crear grupo en mi distrito")
-    with st.form("form_grupo", clear_on_submit=True):
+
+def _titulo(txt: str):
+    st.markdown(f"## {txt}")
+
+
+# ----------------- CREAR GRUPO ----------------- #
+
+def _crear_grupo():
+    _titulo("Crear grupo")
+    st.caption("Registrar un nuevo grupo de ahorro en un distrito.")
+
+    # Cargar distritos creados por el Administrador
+    distritos = fetch_all(
+        "SELECT Id_distrito, Nombre FROM distritos ORDER BY Nombre"
+    )
+
+    if not distritos:
+        st.warning(
+            "No hay distritos registrados. "
+            "Pida al Administrador que cree al menos un distrito."
+        )
+        return
+
+    opciones = {
+        f"{d['Id_distrito']} - {d['Nombre']}": d["Id_distrito"]
+        for d in distritos
+    }
+
+    with st.form("form_crear_grupo", clear_on_submit=True):
         nombre = st.text_input("Nombre del grupo")
-        estado = st.selectbox("Estado", ["ACTIVO", "INACTIVO"], index=0)
+        sel_dist = st.selectbox(
+            "Distrito al que pertenece el grupo",
+            list(opciones.keys())
+        )
         enviar = st.form_submit_button("Crear grupo")
+
         if enviar:
-            if not nombre.strip():
-                st.warning("Nombre requerido.")
-            else:
-                sql = """
-                    INSERT INTO grupos (Nombre, id_distrito, Estado, Creado_por, Creado_en)
-                    VALUES (%s, %s, %s, %s, %s)
-                """
-                _, gid = execute(sql, (nombre.strip(), id_distrito, estado, current_user()["id_usuarios"], date.today()))
-                st.success(f"Grupo creado (id={gid}).")
+            nom = (nombre or "").strip()
+            if not nom:
+                st.warning("Debe ingresar el nombre del grupo.")
+                return
 
-def _listado_grupos(id_distrito):
-    st.subheader("Mis grupos por distrito")
-    grupos = fetch_all("""
-        SELECT g.id_grupo, g.Nombre, g.Estado, g.Creado_en,
-               (SELECT COUNT(1) FROM usuarios u WHERE u.Rol='DIRECTIVA' AND u.id_grupo=g.id_grupo) AS TieneDirectiva
+            id_distrito = opciones[sel_dist]
+
+            # evitar duplicado: mismo nombre en el mismo distrito
+            existe = fetch_one(
+                """
+                SELECT Id_grupo
+                FROM grupos
+                WHERE LOWER(Nombre) = LOWER(%s)
+                  AND Id_distrito = %s
+                LIMIT 1
+                """,
+                (nom, id_distrito),
+            )
+            if existe:
+                st.error("Ya existe un grupo con ese nombre en ese distrito.")
+                return
+
+            usuario = current_user()
+            creado_por = usuario.get("Id_usuario") if usuario else None
+            hoy = date.today()
+
+            # Ajusta los nombres de columnas si tu tabla 'grupos' es distinta
+            sql = """
+                INSERT INTO grupos (Nombre, Id_distrito, Estado, Creado_por, Creado_en)
+                VALUES (%s, %s, %s, %s, %s)
+            """
+            _, gid = execute(sql, (nom, id_distrito, "ACTIVO", creado_por, hoy))
+            st.success(f"Grupo creado correctamente (Id_grupo={gid}).")
+
+
+# ----------------- MIS GRUPOS ----------------- #
+
+def _mis_grupos():
+    _titulo("Mis grupos")
+
+    # Por ahora mostramos todos los grupos con su distrito
+    # (luego se puede filtrar por promotora si lo deseas)
+    grupos = fetch_all(
+        """
+        SELECT g.Id_grupo,
+               g.Nombre,
+               d.Nombre AS Distrito,
+               g.Estado,
+               g.Creado_en
         FROM grupos g
-        WHERE g.id_distrito=%s
-        ORDER BY g.id_grupo DESC
-    """, (id_distrito,))
-    st.dataframe(grupos, use_container_width=True)
-    return grupos
+        LEFT JOIN distritos d ON d.Id_distrito = g.Id_distrito
+        ORDER BY g.Id_grupo DESC
+        """
+    )
 
-def _crear_directiva_para_grupo():
-    st.subheader("Crear usuario de Directiva para un grupo")
-    # Solo grupos del distrito de la promotora
-    mis_grupos = fetch_all("""
-        SELECT id_grupo, Nombre
-        FROM grupos
-        WHERE id_distrito=%s
-        ORDER BY Nombre
-    """, (current_user()["id_distrito"],))
-    opciones = {f"{g['Nombre']} (id {g['id_grupo']})": g["id_grupo"] for g in mis_grupos}
+    if not grupos:
+        st.info("Todavía no hay grupos registrados.")
+    else:
+        st.dataframe(grupos, use_container_width=True)
 
-    with st.form("form_directiva", clear_on_submit=True):
-        nombre = st.text_input("Nombre mostrado del usuario Directiva (p.ej., 'Directiva Grupo X')")
-        dui = st.text_input("DUI para el usuario de Directiva")
-        contr = st.text_input("Contraseña inicial", type="password")
-        sel = st.selectbox("Grupo", list(opciones.keys())) if opciones else None
-        crear = st.form_submit_button("Crear Directiva")
-        if crear:
-            if not (nombre and dui and contr and sel):
-                st.warning("Complete todos los campos.")
-            else:
-                id_grupo = opciones[sel]
-                # Asegurar un usuario por grupo
-                existe = fetch_one("SELECT id_usuarios FROM usuarios WHERE Rol='DIRECTIVA' AND id_grupo=%s LIMIT 1", (id_grupo,))
-                if existe:
-                    st.error("Ese grupo ya tiene usuario de Directiva.")
-                    return
-                sql = """
-                    INSERT INTO usuarios (Nombre, DUI, Contraseña, Rol, id_grupo, Activo, Creado_en)
-                    VALUES (%s, %s, %s, 'DIRECTIVA', %s, '1', %s)
-                """
-                _, uid = execute(sql, (nombre, dui, contr, id_grupo, date.today()))
-                st.success(f"Directiva creada (id={uid}) para el grupo {id_grupo}.")
 
-def _descargar_reportes():
-    st.subheader("Reportes consolidados por grupo (placeholder)")
-    st.info("Aquí puedes agregar exportación a CSV/Excel con totales de ahorros, préstamos, mora, etc.")
+# ----------------- CREAR DIRECTIVA (placeholder) ----------------- #
+
+def _crear_directiva():
+    _titulo("Crear Directiva")
+    st.info("Aquí luego podemos implementar la creación de la directiva del grupo.")
+
+
+# ----------------- REPORTES (placeholder) ----------------- #
+
+def _reportes():
+    _titulo("Reportes")
+    st.info("Aquí podrás ver o descargar reportes de los grupos.")
+
+
+# ----------------- PANEL PRINCIPAL DE PROMOTORA ----------------- #
 
 def promotora_panel():
-    _validar_rol_promotora()
-    u = current_user()
-    st.markdown(f"### Distrito asignado: **{u.get('id_distrito')}**")
+    _solo_promotora()
 
-    tabs = st.tabs(["Crear grupo", "Mis grupos", "Crear Directiva", "Reportes"])
-    with tabs[0]:
-        _crear_grupo(u["id_distrito"])
-    with tabs[1]:
-        _listado_grupos(u["id_distrito"])
-    with tabs[2]:
-        _crear_directiva_para_grupo()
-    with tabs[3]:
-        _descargar_reportes()
+    tab1, tab2, tab3, tab4 = st.tabs(
+        ["Crear grupo", "Mis grupos", "Crear Directiva", "Reportes"]
+    )
+
+    with tab1:
+        _crear_grupo()        # <-- SIN parámetros
+    with tab2:
+        _mis_grupos()
+    with tab3:
+        _crear_directiva()
+    with tab4:
+        _reportes()
