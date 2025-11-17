@@ -88,18 +88,16 @@ def _crud_distritos():
                 st.error("Ya existe un distrito con ese nombre.")
                 return
 
-            hoy = date.today()
-            sql = """
-                INSERT INTO distritos (Nombre, Creado_en)
-                VALUES (%s, %s)
-            """
-            _, did = execute(sql, (nom, hoy))
+            # Para evitar problemas con columnas opcionales, solo insertamos Nombre
+            sql = "INSERT INTO distritos (Nombre) VALUES (%s)"
+            _, did = execute(sql, (nom,))
             st.success(f"Distrito creado correctamente (Id_distrito={did}).")
 
     st.subheader("Distritos existentes")
 
+    # AQUÍ quitamos Creado_en del SELECT para evitar el ProgrammingError
     distritos = fetch_all(
-        "SELECT Id_distrito, Nombre, Creado_en FROM distritos ORDER BY Id_distrito ASC"
+        "SELECT Id_distrito, Nombre FROM distritos ORDER BY Id_distrito ASC"
     )
 
     if distritos:
