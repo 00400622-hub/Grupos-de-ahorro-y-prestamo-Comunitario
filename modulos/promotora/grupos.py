@@ -19,47 +19,19 @@ def _titulo(txt: str):
     st.markdown(f"## {txt}")
 
 
-def _promotora_actual():
-    """
-    Obtiene la promotora actual usando el DUI del usuario logueado.
-    Retorna un diccionario con Id_promotora, Nombre, DUI.
-    """
-    u = current_user()
-    if not u:
-        st.error("No hay usuario en sesión.")
-        st.stop()
-
-    dui = u.get("DUI")
-    if not dui:
-        st.error("El usuario en sesión no tiene DUI registrado.")
-        st.stop()
-
-    prom = fetch_one(
-        "SELECT Id_promotora, Nombre, DUI FROM promotora WHERE DUI = %s LIMIT 1",
-        (dui,)
-    )
-    if not prom:
-        st.error(
-            f"No se encontró una promotora en la tabla 'promotora' para el DUI {dui}. "
-            "Verifique que la promotora esté registrada."
-        )
-        st.stop()
-
-    return prom  # { "Id_promotora": ..., "Nombre": ..., "DUI": ... }
-
-
 # ----------------- CREAR GRUPO ----------------- #
 
 def _crear_grupo():
     _titulo("Crear grupo")
     st.caption("Registrar un nuevo grupo de ahorro en un distrito.")
 
-    # promotora actual según DUI
-    promotora = _promotora_actual()
-    id_promotora = promotora["Id_promotora"]
-    dui_prom = promotora["DUI"]
+    usuario = current_user()
+    if not usuario:
+        st.error("No hay usuario en sesión.")
+        st.stop()
 
-    st.info(f"Promotora actual: **{promotora['Nombre']}** (DUI {dui_prom})")
+    dui = (usuario.get("DUI") or "").strip()
+    nombre_usuario = usuario.get("Nombre") or ""
 
     # Cargar distritos creados por el Administrador
     distritos = fetch_all(
@@ -79,21 +51,35 @@ def _crear_grupo():
     }
 
     with st.form("form_crear_grupo", clear_on_submit=True):
-        nombre = st.text_input("Nombre del grupo")
+        nombre_grupo = st.text_input("Nombre del grupo")
+
         sel_dist = st.selectbox(
             "Distrito al que pertenece el grupo",
             list(opciones_dist.keys())
         )
+
+        # TERCERA OPCIÓN: usuario (DUI + nombre) solo lectura
+        st.text_input(
+            "Promotora responsable (DUI)",
+            value=f"{dui} - {nombre_usuario}",
+            disabled=True
+        )
+
         enviar = st.form_submit_button("Crear grupo")
 
         if enviar:
-            nom = (nombre or "").strip()
+            nom = (nombre_grupo or "").strip()
             if not nom:
                 st.warning("Debe ingresar el nombre del grupo.")
                 return
 
+            if not dui:
+                st.error("El usuario actual no tiene DUI registrado.")
+                return
+
             id_distrito = opciones_dist[sel_dist]
             hoy = date.today()
+            id_usuario = usuario.get("Id_usuario")
 
             # evitar duplicado: mismo nombre en el mismo distrito
             existe = fetch_one(
@@ -110,26 +96,42 @@ def _crear_grupo():
                 st.error("Ya existe un grupo con ese nombre en ese distrito.")
                 return
 
+            # IMPORTANTE: guardamos el DUI de la promotora en DUIs_promotoras
+            # y también, si lo tienes, el Id_usuario como Creado_por
             sql = """
-                INSERT INTO grupos (Nombre, Id_distrito, Estado, Id_promotora, Creado_en)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO grupos
+                    (Nombre, Id_distrito, Estado, Creado_por, Creado_en, DUIs_promotoras)
+                VALUES (%s, %s, %s, %s, %s, %s)
             """
-            _, gid = execute(sql, (nom, id_distrito, "ACTIVO", id_promotora, hoy))
+            _, gid = execute(
+                sql,
+                (nom, id_distrito, "ACTIVO", id_usuario, hoy, dui)
+            )
             st.success(f"Grupo creado correctamente (Id_grupo={gid}).")
 
 
-# ----------------- MIS GRUPOS (filtrados por promotora) ----------------- #
+# ----------------- MIS GRUPOS (listar + eliminar + editar DUIs) ----------------- #
 
 def _mis_grupos():
     _titulo("Mis grupos")
 
-    promotora = _promotora_actual()
-    id_promotora = promotora["Id_promotora"]
-    dui_prom = promotora["DUI"]
+    usuario = current_user()
+    if not usuario:
+        st.error("No hay usuario en sesión.")
+        st.stop()
 
-    st.caption(f"Mostrando solo grupos asignados a la promotora con DUI **{dui_prom}**")
+    dui_actual = (usuario.get("DUI") or "").strip()
+    if not dui_actual:
+        st.error("El usuario en sesión no tiene DUI registrado.")
+        st.stop()
 
-    # Solo grupos de esta promotora (Id_promotora)
+    st.caption(
+        f"Se muestran solo los grupos donde el DUI **{dui_actual}** "
+        f"está asignado en la lista de promotoras."
+    )
+
+    # Solo grupos donde DUIs_promotoras contiene el DUI actual.
+    # Usamos FIND_IN_SET sobre una versión sin espacios.
     grupos = fetch_all(
         """
         SELECT g.Id_grupo,
@@ -137,83 +139,115 @@ def _mis_grupos():
                d.Nombre AS Distrito,
                g.Estado,
                g.Creado_en,
-               p.DUI AS DUI_promotora
+               g.DUIs_promotoras
         FROM grupos g
         LEFT JOIN distritos d ON d.Id_distrito = g.Id_distrito
-        LEFT JOIN promotora p ON p.Id_promotora = g.Id_promotora
-        WHERE g.Id_promotora = %s
+        WHERE FIND_IN_SET(%s, REPLACE(IFNULL(g.DUIs_promotoras, ''), ' ', '')) > 0
         ORDER BY g.Id_grupo DESC
         """,
-        (id_promotora,)
+        (dui_actual,)
     )
 
     if not grupos:
-        st.info("Todavía no hay grupos registrados para esta promotora.")
+        st.info("Todavía no hay grupos registrados para este DUI.")
         return
 
-    st.subheader("Listado de mis grupos")
+    st.subheader("Listado de grupos")
     st.dataframe(grupos, use_container_width=True)
 
-    # ----------------- REASIGNAR GRUPO A OTRA PROMOTORA POR DUI ----------------- #
-    st.markdown("### Reasignar grupo a otra promotora (por DUI)")
+    # ----------------- ELIMINAR GRUPO ----------------- #
 
-    opciones_grupo = {
-        f"{g['Id_grupo']} - {g['Nombre']}": g["Id_grupo"]
+    st.markdown("### Eliminar grupo")
+
+    opciones_eliminar = {
+        f"{g['Id_grupo']} - {g['Nombre']} ({g['Distrito'] or 'SIN DISTRITO'})":
+        g["Id_grupo"]
         for g in grupos
     }
 
-    with st.form("form_reasignar_grupo"):
-        sel_grupo = st.selectbox(
-            "Seleccione el grupo a reasignar",
-            list(opciones_grupo.keys())
+    with st.form("form_eliminar_grupo"):
+        sel_elim = st.selectbox(
+            "Seleccione el grupo a eliminar",
+            list(opciones_eliminar.keys())
         )
-        dui_nuevo = st.text_input(
-            "DUI de la nueva promotora (debe existir en la tabla 'promotora')"
+        confirmar_elim = st.checkbox(
+            "Confirmo que deseo eliminar este grupo (no se puede deshacer)."
         )
-        confirmar = st.checkbox(
-            "Confirmo que deseo reasignar este grupo a otra promotora."
-        )
-        reasignar = st.form_submit_button("Reasignar grupo", type="secondary")
+        eliminar = st.form_submit_button("Eliminar grupo", type="secondary")
 
-        if reasignar:
-            if not confirmar:
+        if eliminar:
+            if not confirmar_elim:
                 st.warning("Debes marcar la casilla de confirmación.")
-                return
+            else:
+                id_sel = opciones_eliminar[sel_elim]
+                try:
+                    sql = "DELETE FROM grupos WHERE Id_grupo = %s"
+                    filas, _ = execute(sql, (id_sel,))
+                    if filas > 0:
+                        st.success(f"Grupo {sel_elim} eliminado correctamente.")
+                        st.rerun()
+                    else:
+                        st.warning("No se encontró el grupo seleccionado.")
+                except Exception as e:
+                    st.error(
+                        "No se puede eliminar el grupo porque está siendo usado "
+                        "por otros registros."
+                    )
+                    st.exception(e)
 
-            dui_nuevo = (dui_nuevo or "").strip()
-            if not dui_nuevo:
-                st.warning("Debes ingresar el DUI de la nueva promotora.")
-                return
+    st.markdown("---")
 
-            # Buscar nueva promotora por DUI en tabla 'promotora'
-            nueva_prom = fetch_one(
-                "SELECT Id_promotora, Nombre FROM promotora WHERE DUI = %s LIMIT 1",
-                (dui_nuevo,)
-            )
-            if not nueva_prom:
-                st.error(
-                    f"No se encontró una promotora con el DUI {dui_nuevo} "
-                    "en la tabla 'promotora'."
-                )
-                return
+    # ----------------- EDITAR DUIs DE PROMOTORAS ASIGNADAS ----------------- #
 
-            id_grupo_sel = opciones_grupo[sel_grupo]
-            id_promotora_nueva = nueva_prom["Id_promotora"]
+    st.markdown("### Editar promotoras (DUIs) asignadas al grupo")
+
+    # Diccionario con info completa del grupo
+    grupos_dict = {
+        f"{g['Id_grupo']} - {g['Nombre']}": g for g in grupos
+    }
+
+    with st.form("form_editar_duis"):
+        sel_edit = st.selectbox(
+            "Seleccione el grupo a editar",
+            list(grupos_dict.keys())
+        )
+        grupo_sel = grupos_dict[sel_edit]
+        duis_actuales = grupo_sel.get("DUIs_promotoras") or ""
+
+        ayuda_texto = (
+            "DUIs de promotoras asignadas al grupo, separados por coma "
+            "(ejemplo: 065251519,012345678). "
+            "Procura NO dejar espacios."
+        )
+
+        nuevos_duis = st.text_input(
+            "DUIs (separados por coma)",
+            value=duis_actuales,
+            help=ayuda_texto,
+        )
+
+        guardar = st.form_submit_button("Guardar cambios")
+
+        if guardar:
+            # Normalizamos: quitamos espacios y duplicados
+            partes = [d.strip() for d in (nuevos_duis or "").split(",") if d.strip()]
+            partes_unicas = []
+            for d in partes:
+                if d not in partes_unicas:
+                    partes_unicas.append(d)
+            valor_final = ",".join(partes_unicas)
 
             try:
-                sql = "UPDATE grupos SET Id_promotora = %s WHERE Id_grupo = %s"
-                filas, _ = execute(sql, (id_promotora_nueva, id_grupo_sel))
+                sql = "UPDATE grupos SET DUIs_promotoras = %s WHERE Id_grupo = %s"
+                filas, _ = execute(sql, (valor_final, grupo_sel["Id_grupo"]))
                 if filas > 0:
-                    st.success(
-                        f"Grupo reasignado correctamente a la promotora "
-                        f"{nueva_prom['Nombre']} (DUI {dui_nuevo})."
-                    )
+                    st.success("Lista de DUIs actualizada correctamente.")
                     st.rerun()
                 else:
                     st.warning("No se encontró el grupo seleccionado.")
             except Exception as e:
                 st.error(
-                    "No se pudo reasignar el grupo por un error en la base de datos."
+                    "No se pudo actualizar la lista de DUIs por un error en la base de datos."
                 )
                 st.exception(e)
 
@@ -229,11 +263,7 @@ def _crear_directiva():
 
 def _reportes():
     _titulo("Reportes")
-    promotora = _promotora_actual()
-    st.info(
-        f"Aquí podrás ver o descargar reportes de los grupos asignados a la promotora "
-        f"con DUI {promotora['DUI']}."
-    )
+    st.info("Aquí podrás ver o descargar reportes de tus grupos.")
 
 
 # ----------------- PANEL PRINCIPAL DE PROMOTORA ----------------- #
