@@ -2,7 +2,7 @@ import streamlit as st
 from datetime import date
 
 from modulos.config.conexion import fetch_all, fetch_one, execute
-from modulos.auth.rbac import require_auth, has_role
+from modulos.auth.rbac import require_admin
 
 
 # ---------- helpers generales ---------- #
