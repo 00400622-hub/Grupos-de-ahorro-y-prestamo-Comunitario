@@ -39,6 +39,41 @@ def _crud_distritos():
             st.success("Distrito creado correctamente.")
             st.experimental_rerun()
 
+    st.write("---")
+    st.write("### Eliminar distrito")
+
+    if distritos:
+        # Mapa etiqueta → Id_distrito
+        opciones = {
+            f'{d["Id_distrito"]} - {d["Nombre"]}': d["Id_distrito"]
+            for d in distritos
+        }
+        etiqueta_sel = st.selectbox(
+            "Seleccione el distrito a eliminar",
+            list(opciones.keys())
+        )
+        id_sel = opciones[etiqueta_sel]
+
+        confirmar = st.checkbox(
+            "Confirmo que deseo eliminar este distrito (no se puede deshacer)."
+        )
+
+        if st.button("Eliminar distrito"):
+            if not confirmar:
+                st.warning("Debe marcar la casilla de confirmación.")
+            else:
+                try:
+                    execute("DELETE FROM distritos WHERE Id_distrito = %s", (id_sel,))
+                    st.success("Distrito eliminado correctamente.")
+                    st.experimental_rerun()
+                except Exception as e:
+                    st.error(
+                        "No se pudo eliminar el distrito. "
+                        "Verifique si está siendo usado en otros registros."
+                    )
+    else:
+        st.info("No hay distritos para eliminar.")
+
 
 # ==========================
 # Sincronizar promotora con usuario
@@ -64,8 +99,10 @@ def _sync_promotora_from_usuario(uid: int):
     if rol != "PROMOTORA":
         return
 
-    existe = fetch_one("SELECT Id_promotora FROM promotora WHERE DUI = %s LIMIT 1",
-                       (usuario["DUI"],))
+    existe = fetch_one(
+        "SELECT Id_promotora FROM promotora WHERE DUI = %s LIMIT 1",
+        (usuario["DUI"],),
+    )
     if existe:
         return
 
@@ -115,7 +152,8 @@ def _crud_usuarios():
         else:
             id_rol = mapa_roles[rol_nombre]
             uid = execute(
-                "INSERT INTO Usuario (Nombre, DUI, Contraseña, Id_rol) VALUES (%s,%s,%s,%s)",
+                "INSERT INTO Usuario (Nombre, DUI, Contraseña, Id_rol) "
+                "VALUES (%s,%s,%s,%s)",
                 (nombre.strip(), dui.strip(), contr.strip(), id_rol),
                 return_last_id=True,
             )
@@ -128,10 +166,18 @@ def _crud_usuarios():
     st.write("### Eliminar usuario")
 
     if usuarios:
-        opciones = {f'{u["Id_usuario"]} - {u["Nombre"]} ({u["DUI"]})': u["Id_usuario"] for u in usuarios}
-        label_sel = st.selectbox("Seleccione el usuario a eliminar", list(opciones.keys()))
+        opciones = {
+            f'{u["Id_usuario"]} - {u["Nombre"]} ({u["DUI"]})': u["Id_usuario"]
+            for u in usuarios
+        }
+        label_sel = st.selectbox(
+            "Seleccione el usuario a eliminar",
+            list(opciones.keys())
+        )
         uid_sel = opciones[label_sel]
-        confirmar = st.checkbox("Confirmo que deseo eliminar este usuario (no se puede deshacer).")
+        confirmar = st.checkbox(
+            "Confirmo que deseo eliminar este usuario (no se puede deshacer)."
+        )
         if st.button("Eliminar usuario"):
             if confirmar:
                 execute("DELETE FROM Usuario WHERE Id_usuario = %s", (uid_sel,))
