@@ -1,58 +1,68 @@
-# modulos/auth/rbac.py
-
 import streamlit as st
 
 
-# =========================================================
-#  Manejo de sesión de usuario
-# =========================================================
-
+# ==========================
+#  Manejo de usuario en sesión
+# ==========================
 def get_user():
-    """Devuelve el usuario guardado en sesión o None."""
+    """Devuelve el diccionario de usuario guardado en sesión o None."""
     return st.session_state.get("user")
 
 
-def set_user(data: dict):
+def set_user(user_dict: dict):
     """Guarda el usuario en la sesión."""
-    st.session_state["user"] = data
+    st.session_state["user"] = user_dict
 
 
 def clear_user():
-    """Cierra sesión (elimina al usuario de session_state)."""
+    """Elimina el usuario de la sesión."""
     st.session_state.pop("user", None)
 
 
-# =========================================================
-#  Reglas de rol
-# =========================================================
-
-def _require_role(expected_role: str):
+# ==========================
+#  Decorador: requiere estar logueado
+# ==========================
+def require_auth(func):
     """
-    Verifica que haya usuario en sesión y que tenga el rol esperado.
-    expected_role: 'ADMINISTRADOR', 'PROMOTORA', 'DIRECTIVA'
+    Decorador: si no hay usuario en sesión, muestra error y detiene la ejecución.
     """
-    user = get_user()
-    if not user:
-        import streamlit as st
-        st.error("No hay una sesión activa.")
-        st.stop()
 
-    rol = (user.get("Rol") or "").upper().strip()
-    if rol != expected_role.upper():
-        import streamlit as st
-        st.error("No tiene permisos para ver esta sección.")
-        st.stop()
+    def wrapper(*args, **kwargs):
+        if "user" not in st.session_state:
+            st.error("No hay una sesión activa.")
+            st.stop()
+        return func(*args, **kwargs)
 
-    return user
+    return wrapper
 
 
-def require_admin():
-    return _require_role("ADMINISTRADOR")
+# ==========================
+#  Decorador: requiere rol específico
+# ==========================
+def require_user_role(*roles_aceptados):
+    """
+    Uso:
+        @require_auth
+        @require_user_role("ADMINISTRADOR", "PROMOTORA")
+        def mi_pantalla():
+            ...
+    """
+    roles_norm = {r.upper().strip() for r in roles_aceptados}
 
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            user = st.session_state.get("user")
+            if not user:
+                st.error("No hay una sesión activa.")
+                st.stop()
 
-def require_promotora():
-    return _require_role("PROMOTORA")
+            rol = (user.get("Rol") or "").upper().strip()
+            if rol not in roles_norm:
+                st.error("No tiene permisos para ver esta sección.")
+                st.stop()
 
+            return func(*args, **kwargs)
 
-def require_directiva():
-    return _require_role("DIRECTIVA")
+        return wrapper
+
+    return decorator
