@@ -5,7 +5,9 @@ import streamlit as st
 _SESSION_KEY = "user"
 
 
-# ========== Sesión ==========
+# ==========================
+#  Sesión
+# ==========================
 def get_user() -> dict | None:
     """Devuelve el usuario actual o None si no hay sesión."""
     return st.session_state.get(_SESSION_KEY)
@@ -26,13 +28,17 @@ def is_logged_in() -> bool:
     return _SESSION_KEY in st.session_state
 
 
-# ========== Decoradores ==========
+# ==========================
+#  Decoradores
+# ==========================
 def require_auth(func):
     """
-    Decorador simple: exige que haya sesión.
-    Uso:
+    Decorador: exige que haya sesión.
+    Si no hay usuario, muestra mensaje y corta la ejecución.
+
+    Se usa así:
         @require_auth
-        def admin_panel():
+        def pantalla():
             ...
     """
 
@@ -49,6 +55,7 @@ def has_role(*roles_permitidos: str):
     """
     Decorador: exige que el rol del usuario esté en roles_permitidos.
     Ejemplo:
+        @require_auth
         @has_role("ADMINISTRADOR", "PROMOTORA")
     """
 
