@@ -2,17 +2,19 @@
 import streamlit as st
 import bcrypt
 from modulos.config.conexion import fetch_one
-from modulos.auth.rbac import set_user  # usamos set_user del rbac
+from modulos.auth.rbac import set_user
 
 
 def _check_password(plain: str, hashed_or_plain_from_db: str) -> bool:
+    """Soporta contraseña en texto plano o bcrypt."""
     if not hashed_or_plain_from_db:
         return False
-    stored = hashed_or_plain_from_db.encode("utf-8")
     try:
-        # Soporta bcrypt o texto plano
+        # Si el valor de BD parece bcrypt
         if hashed_or_plain_from_db.startswith("$2b$") or hashed_or_plain_from_db.startswith("$2a$"):
+            stored = hashed_or_plain_from_db.encode("utf-8")
             return bcrypt.checkpw(plain.encode("utf-8"), stored)
+        # Caso contrario, texto plano
         return plain == hashed_or_plain_from_db
     except Exception:
         return False
@@ -54,5 +56,6 @@ def login_screen():
             "id_rol": user["Id_rol"],
             "Rol": (user["RolNombre"] or "").upper().strip(),  # ADMINISTRADOR / PROMOTORA / DIRECTIVA
         })
+
         st.success("Ingreso exitoso.")
         st.rerun()
