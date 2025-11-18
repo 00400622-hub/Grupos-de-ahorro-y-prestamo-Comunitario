@@ -129,7 +129,7 @@ def _crud_usuarios():
                 return_last_id=True,
             )
 
-            # Si el rol es PROMOTORA, nos aseguramos de que exista en la tabla 'promotora'
+            # Si el rol es PROMOTORA, aseguramos fila en 'promotora'
             if rol_nombre.upper().strip() == "PROMOTORA":
                 existe_prom = fetch_one(
                     "SELECT Id_promotora FROM promotora WHERE DUI = %s LIMIT 1",
@@ -176,7 +176,7 @@ def _crud_usuarios():
 # PANEL ADMINISTRADOR
 # ==========================
 
-@require_auth()
+@require_auth   # <--- sin paréntesis, ahora es seguro
 @has_role("ADMINISTRADOR", "ADMINISTRADOR GENERAL")
 def admin_panel():
     st.title("Panel de Administración — SGI GAPC")
