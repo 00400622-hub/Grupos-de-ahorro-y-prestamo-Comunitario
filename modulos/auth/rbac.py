@@ -1,67 +1,76 @@
+# modulos/auth/rbac.py
 import streamlit as st
 
-# ==========================
-# Manejo básico de sesión
-# ==========================
-
-def get_current_user() -> dict | None:
-    """
-    Devuelve el usuario guardado en la sesión, o None si no hay.
-    """
-    return st.session_state.get("user")
+# Clave única donde guardamos el usuario en la sesión de Streamlit
+_SESSION_KEY = "user"
 
 
-def set_user(user: dict) -> None:
-    """
-    Guarda el usuario en la sesión.
-    Espera un diccionario con al menos: Id_usuario, Nombre, DUI, id_rol, Rol.
-    """
-    st.session_state["user"] = user
+# ==========
+#  Sesión
+# ==========
+def get_user() -> dict | None:
+    """Devuelve el usuario actual o None si no hay sesión."""
+    return st.session_state.get(_SESSION_KEY)
+
+
+def set_user(info: dict) -> None:
+    """Guarda/actualiza el usuario en la sesión."""
+    st.session_state[_SESSION_KEY] = info
 
 
 def clear_user() -> None:
+    """Elimina la sesión de usuario."""
+    st.session_state.pop(_SESSION_KEY, None)
+
+
+def is_logged_in() -> bool:
+    """True si hay usuario en sesión."""
+    return _SESSION_KEY in st.session_state
+
+
+# ==========
+#  Decoradores
+# ==========
+def require_auth():
     """
-    Elimina el usuario de la sesión (logout).
+    Decorador: exige que haya sesión.
+    Si no hay usuario, muestra mensaje y corta la ejecución.
     """
-    if "user" in st.session_state:
-        del st.session_state["user"]
+
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            if not is_logged_in():
+                st.error("No hay una sesión activa.")
+                st.stop()
+            return func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
 
 
-# =========================================
-# Helpers de autorización / protección de vistas
-# =========================================
-
-def require_auth() -> dict:
+def has_role(*roles_permitidos: str):
     """
-    Verifica que haya un usuario logueado.
-    - Si NO hay sesión, muestra error y detiene la ejecución.
-    - Si SÍ hay sesión, devuelve el diccionario de usuario.
+    Decorador: exige que el rol del usuario esté en roles_permitidos.
+    Ejemplo: @has_role("ADMINISTRADOR", "PROMOTORA")
     """
-    user = get_current_user()
-    if not user:
-        st.error("No hay una sesión activa.")
-        st.stop()   # Detiene el script de Streamlit
-    return user
 
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            user = get_user()
+            if not user:
+                st.error("No hay una sesión activa.")
+                st.stop()
 
-def has_role(*roles_permitidos: str) -> dict:
-    """
-    Verifica que el usuario logueado tenga uno de los roles permitidos.
+            rol_usuario = (user.get("Rol") or "").upper().strip()
+            roles_ok = [r.upper().strip() for r in roles_permitidos]
 
-    Ejemplos:
-        user = has_role("ADMINISTRADOR")
-        user = has_role("PROMOTORA", "ADMINISTRADOR")
+            if rol_usuario not in roles_ok:
+                st.error("No tiene permiso para ver esta sección.")
+                st.stop()
 
-    - Si no hay sesión -> mismo comportamiento que require_auth().
-    - Si hay sesión pero el rol no está en roles_permitidos -> error y st.stop().
-    - Si todo bien -> devuelve el diccionario de usuario.
-    """
-    user = require_auth()
-    rol_usuario = (user.get("Rol") or "").upper().strip()
-    roles_norm = [r.upper().strip() for r in roles_permitidos]
+            return func(*args, **kwargs)
 
-    if roles_norm and rol_usuario not in roles_norm:
-        st.error("No tiene permisos para ver esta página.")
-        st.stop()
+        return wrapper
 
-    return user
+    return decorator
