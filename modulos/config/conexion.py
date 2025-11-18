@@ -1,108 +1,81 @@
-import streamlit as st
+# modulos/config/conexion.py
+import contextlib
 import mysql.connector
-from mysql.connector.pooling import MySQLConnectionPool
-from mysql.connector import InterfaceError, Error
-from contextlib import contextmanager
+from mysql.connector import pooling
+import streamlit as st
 
-# Credenciales Clever Cloud
-HOST = "bddu6yel2ww6hx27qwg0-mysql.services.clever-cloud.com"
-USER = "uvkxd9piyuwt9e3d"
-PASSWORD = "NVcd1m955q5Qrzei5rFt"
-DATABASE = "bddu6yel2ww6hx27qwg0"
-PORT = 3306
+# -------------------------------------------------------------------
+#  Configuración del pool de conexiones
+# -------------------------------------------------------------------
+# Ajusta estos valores a como ya los tenías antes (st.secrets o datos fijos)
+MYSQL_CONFIG = {
+    "host": st.secrets["mysql"]["host"],
+    "port": st.secrets["mysql"].get("port", 3306),
+    "user": st.secrets["mysql"]["user"],
+    "password": st.secrets["mysql"]["password"],
+    "database": st.secrets["mysql"]["database"],
+}
 
+POOL = pooling.MySQLConnectionPool(
+    pool_name="sgi_gapc_pool",
+    pool_size=5,
+    pool_reset_session=True,
+    **MYSQL_CONFIG,
+)
 
-@st.cache_resource
-def _get_pool() -> MySQLConnectionPool:
-    """
-    Crea un pool de conexiones (máx 4) para no reventar el límite de Clever Cloud.
-    Si luego borramos este cache con _get_pool.clear(), se recrea.
-    """
-    return MySQLConnectionPool(
-        pool_name="sgi_gapc_pool",
-        pool_size=4,
-        pool_reset_session=True,
-        host=HOST,
-        user=USER,
-        password=PASSWORD,
-        database=DATABASE,
-        port=PORT,
-        autocommit=False,
-    )
-
-
-def obtener_conexion():
-    """Compatibilidad con código viejo: devuelve una conexión del pool."""
-    return _get_pool().get_connection()
-
-
-@contextmanager
+# -------------------------------------------------------------------
+#  Helper de conexión (context manager)
+# -------------------------------------------------------------------
+@contextlib.contextmanager
 def db_conn():
-    """
-    Uso recomendado:
-        with db_conn() as con:
-            ...
-
-    Siempre devuelve una conexión válida del pool. Si el pool está corrupto,
-    lo recrea automáticamente.
-    """
-    con = None
+    cnx = None
     try:
-        try:
-            # Intentamos obtener una conexión del pool
-            con = _get_pool().get_connection()
-        except InterfaceError:
-            # Si falla (por ejemplo, conexiones muertas), recreamos el pool
-            _get_pool.clear()
-            con = _get_pool().get_connection()
-
-        yield con
-
+        cnx = POOL.get_connection()
+        yield cnx
     finally:
-        # Devolvemos la conexión al pool de forma segura
-        try:
-            if con and con.is_connected():
-                con.close()
-        except Exception:
-            pass
+        if cnx is not None and cnx.is_connected():
+            cnx.close()
 
 
-# ----------------- helpers para consultas ----------------- #
+# -------------------------------------------------------------------
+#  Helpers de consulta
+# -------------------------------------------------------------------
+def execute(sql: str, params=None, return_last_id: bool = False):
+    """
+    Ejecuta un INSERT/UPDATE/DELETE.
+    Si return_last_id=True, devuelve el lastrowid del cursor.
+    """
+    if params is None:
+        params = ()
+
+    with db_conn() as cnx:
+        cur = cnx.cursor()
+        cur.execute(sql, params)
+        cnx.commit()
+        if return_last_id:
+            return cur.lastrowid
+        return None
+
 
 def fetch_one(sql: str, params=None):
-    """
-    Ejecuta un SELECT y devuelve solo un registro (dict) o None.
-    """
-    with db_conn() as con:
-        cur = con.cursor(dictionary=True)
-        cur.execute(sql, params or ())
+    """Devuelve UNA fila como dict o None."""
+    if params is None:
+        params = ()
+
+    with db_conn() as cnx:
+        cur = cnx.cursor(dictionary=True)
+        cur.execute(sql, params)
         row = cur.fetchone()
-        cur.close()
         return row
 
 
 def fetch_all(sql: str, params=None):
-    """
-    Ejecuta un SELECT y devuelve una lista de registros (list[dict]).
-    """
-    with db_conn() as con:
-        cur = con.cursor(dictionary=True)
-        cur.execute(sql, params or ())
+    """Devuelve TODAS las filas como lista de dicts."""
+    if params is None:
+        params = ()
+
+    with db_conn() as cnx:
+        cur = cnx.cursor(dictionary=True)
+        cur.execute(sql, params)
         rows = cur.fetchall()
-        cur.close()
         return rows
-
-
-def execute(sql: str, params=None):
-    """
-    Ejecuta un INSERT/UPDATE/DELETE.
-    Devuelve (rowcount, last_id).
-    """
-    with db_conn() as con:
-        cur = con.cursor()
-        cur.execute(sql, params or ())
-        con.commit()
-        rowcount = cur.rowcount
-        last_id = cur.lastrowid
-        cur.close()
-        return rowcount, last_id
