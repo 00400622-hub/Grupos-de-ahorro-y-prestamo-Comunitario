@@ -1,5 +1,3 @@
-# modulos/auth/login.py
-
 import streamlit as st
 import bcrypt
 from modulos.config.conexion import fetch_one
@@ -9,7 +7,6 @@ from modulos.auth.rbac import set_user
 def _check_password(plain: str, hashed_or_plain_from_db: str) -> bool:
     if not hashed_or_plain_from_db:
         return False
-
     stored = hashed_or_plain_from_db.encode("utf-8")
     try:
         # Soporta bcrypt o texto plano
@@ -31,7 +28,6 @@ def login_screen():
             st.warning("Ingrese DUI y contraseña.")
             return
 
-        # Nombres exactos de tabla y columnas de tu BD
         sql = """
             SELECT u.Id_usuario, u.Nombre, u.DUI, u.Contraseña, u.Id_rol,
                    r.`Tipo de rol` AS RolNombre
@@ -49,7 +45,7 @@ def login_screen():
             st.error("Credenciales inválidas.")
             return
 
-        # Guardar usuario en sesión (clave única: "user")
+        # Guardamos lo que necesitamos en sesión
         set_user({
             "Id_usuario": user["Id_usuario"],
             "Nombre": user["Nombre"],
@@ -57,6 +53,5 @@ def login_screen():
             "id_rol": user["Id_rol"],
             "Rol": (user["RolNombre"] or "").upper().strip(),  # ADMINISTRADOR / PROMOTORA / DIRECTIVA
         })
-
         st.success("Ingreso exitoso.")
         st.rerun()
