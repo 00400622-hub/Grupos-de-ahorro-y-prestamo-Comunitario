@@ -1,25 +1,30 @@
 # modulos/admin/panel.py
 import datetime as dt
 import streamlit as st
-import pandas as pd
 
 from modulos.config.conexion import fetch_all, fetch_one, execute
 from modulos.auth.rbac import require_auth, has_role
 
 
 # ==========================
-# CRUD DISTRITOS
+#  CRUD DISTRITOS
 # ==========================
-
 def _crud_distritos():
     st.subheader("Distritos")
 
-    # Listado
-    distritos = fetch_all("""
-        SELECT Id_distrito, Nombre, Estado, Creado_en
-        FROM distritos
-        ORDER BY Id_distrito ASC
-    """)
+    # ----- Listado -----
+    try:
+        distritos = fetch_all(
+            """
+            SELECT Id_distrito, Nombre, Estado, Creado_en
+            FROM distritos
+            ORDER BY Id_distrito ASC
+            """
+        )
+    except Exception as e:
+        st.error("Error al consultar la tabla 'distritos'. Revisa nombres de tabla/columnas en phpMyAdmin.")
+        st.code(str(e))
+        return
 
     st.write("### Lista de distritos")
     if distritos:
@@ -30,24 +35,30 @@ def _crud_distritos():
     st.write("---")
     st.write("### Crear nuevo distrito")
     nombre = st.text_input("Nombre del distrito")
+
     if st.button("Crear distrito"):
         if not nombre.strip():
             st.warning("Ingrese un nombre válido.")
         else:
             hoy = dt.date.today()
-            execute(
-                "INSERT INTO distritos (Nombre, Estado, Creado_en) VALUES (%s, %s, %s)",
-                (nombre.strip(), "ACTIVO", hoy),
-            )
-            st.success("Distrito creado correctamente.")
-            st.experimental_rerun()
+            try:
+                # Si tu tabla tiene columna Creado_por NOT NULL, ajústalo aquí
+                # por ejemplo, Creado_por = 1 (Administrador general) o permitir NULL.
+                execute(
+                    "INSERT INTO distritos (Nombre, Estado, Creado_en) VALUES (%s, %s, %s)",
+                    (nombre.strip(), "ACTIVO", hoy),
+                )
+                st.success("Distrito creado correctamente.")
+                st.experimental_rerun()
+            except Exception as e:
+                st.error("Error al crear el distrito. Revisa restricciones de la tabla (NOT NULL, llaves foráneas, etc.).")
+                st.code(str(e))
 
 
 # ==========================
-# Sincronizar promotora con usuario
+#  Sincronizar promotora con usuario
 # ==========================
-
-def _sync_promotora_from_usuario(uid: int) -> None:
+def _sync_promotora_from_usuario(uid: int):
     """
     Si el usuario tiene rol PROMOTORA, asegura que exista fila en 'promotora'.
     """
@@ -67,7 +78,7 @@ def _sync_promotora_from_usuario(uid: int) -> None:
     if rol != "PROMOTORA":
         return
 
-    # ¿Ya existe esa promotora?
+    # ¿Ya existe promotora con ese DUI?
     existe = fetch_one(
         "SELECT Id_promotora FROM promotora WHERE DUI = %s LIMIT 1",
         (usuario["DUI"],),
@@ -75,7 +86,7 @@ def _sync_promotora_from_usuario(uid: int) -> None:
     if existe:
         return
 
-    # Crear registro en tabla promotora
+    # Crear promotora
     execute(
         "INSERT INTO promotora (Nombre, DUI) VALUES (%s, %s)",
         (usuario["Nombre"], usuario["DUI"]),
@@ -83,18 +94,19 @@ def _sync_promotora_from_usuario(uid: int) -> None:
 
 
 # ==========================
-# CRUD USUARIOS
+#  CRUD USUARIOS
 # ==========================
-
 def _crud_usuarios():
     st.subheader("Usuarios")
 
-    usuarios = fetch_all("""
+    usuarios = fetch_all(
+        """
         SELECT u.Id_usuario, u.Nombre, u.DUI, r.`Tipo de rol` AS Rol, u.Id_rol
         FROM Usuario u
         JOIN rol r ON r.Id_rol = u.Id_rol
         ORDER BY u.Id_usuario ASC
-    """)
+        """
+    )
 
     st.write("### Lista de usuarios")
     if usuarios:
@@ -156,58 +168,17 @@ def _crud_usuarios():
 
 
 # ==========================
-# REPORTES DE GRUPOS
+#  PANEL ADMINISTRADOR
 # ==========================
-
-def _reporte_grupos():
-    st.subheader("Reportes de grupos")
-
-    grupos = fetch_all("""
-        SELECT 
-            g.Id_grupo,
-            g.Nombre        AS Grupo,
-            d.Nombre        AS Distrito,
-            g.Estado,
-            g.Creado_en
-        FROM grupos g
-        LEFT JOIN distritos d ON d.Id_distrito = g.Id_distrito
-        ORDER BY g.Id_grupo ASC
-    """)
-
-    if not grupos:
-        st.info("No hay grupos registrados.")
-        return
-
-    st.write("### Lista de todos los grupos")
-    st.table(grupos)
-
-    # Descargar CSV
-    df = pd.DataFrame(grupos)
-    csv = df.to_csv(index=False).encode("utf-8")
-    st.download_button(
-        "📥 Descargar reporte de grupos (CSV)",
-        data=csv,
-        file_name="reporte_grupos_sgi_gapc.csv",
-        mime="text/csv",
-    )
-
-
-# ==========================
-# PANEL ADMINISTRADOR
-# ==========================
-
 @require_auth
 @has_role("ADMINISTRADOR")
 def admin_panel():
     st.title("Panel de Administración — SGI GAPC")
 
-    pestañas = st.tabs(["Distritos", "Usuarios", "Reportes"])
+    pestañas = st.tabs(["Distritos", "Usuarios"])
 
     with pestañas[0]:
         _crud_distritos()
 
     with pestañas[1]:
         _crud_usuarios()
-
-    with pestañas[2]:
-        _reporte_grupos()
