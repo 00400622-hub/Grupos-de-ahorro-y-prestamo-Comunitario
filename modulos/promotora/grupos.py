@@ -1,3 +1,5 @@
+# modulos/promotora/grupos.py
+
 import streamlit as st
 from datetime import date
 from mysql.connector.errors import IntegrityError
@@ -6,9 +8,11 @@ from modulos.config.conexion import fetch_all, fetch_one, execute
 from modulos.promotora.directiva import crear_directiva_panel
 
 
-# ----------------- Helpers comunes ----------------- #
-
+# -------------------------------------------------------------------
+# Helpers de sesión / rol
+# -------------------------------------------------------------------
 def _get_usuario_actual():
+    """Devuelve el usuario logueado desde session_state o detiene la app."""
     usuario = st.session_state.get("usuario")
     if not usuario:
         st.error("No hay una sesión activa.")
@@ -16,131 +20,109 @@ def _get_usuario_actual():
     return usuario
 
 
-def _get_promotora_actual():
-    """
-    Usa el DUI del usuario logueado para buscar su fila en la tabla 'promotora'.
-    """
+def _solo_promotora():
+    """Verifica que el usuario actual sea PROMOTORA."""
     usuario = _get_usuario_actual()
-    dui = usuario["DUI"]
+    rol = str(usuario.get("Rol") or usuario.get("rol") or "").upper()
+    if rol != "PROMOTORA":
+        st.error("Solo las promotoras pueden acceder a este módulo.")
+        st.stop()
+    return usuario
 
-    promotora = fetch_one(
-        "SELECT Id_promotora, Nombre FROM promotora WHERE DUI = %s",
+
+def _get_promotora_id(usuario):
+    """
+    Busca el Id_promotora en la tabla promotora usando el DUI del usuario.
+    Tabla promotora: Id_promotora, Nombre, DUI
+    """
+    dui = usuario["DUI"]
+    prom = fetch_one(
+        "SELECT Id_promotora FROM promotora WHERE DUI = %s",
         (dui,),
     )
-    if not promotora:
-        st.error(
-            f"No se encontró una promotora registrada para el DUI {dui}. "
-            "Pida al administrador que revise la tabla 'promotora'."
+    if not prom:
+        st.warning(
+            "Este usuario todavía no está registrado en la tabla 'promotora'. "
+            "Primero debe crearse como promotora desde el módulo de ADMINISTRADOR."
         )
         st.stop()
+    return prom["Id_promotora"]
 
-    return promotora
 
+# -------------------------------------------------------------------
+# Pantalla: Crear grupo
+# -------------------------------------------------------------------
+def _crear_grupo(usuario, id_promotora):
+    st.subheader("Registrar nuevo grupo")
 
-# ----------------- Crear grupo ----------------- #
-
-def _crear_grupo():
-    st.subheader("Registrar nuevo grupo de ahorro")
-
-    promotora = _get_promotora_actual()
-    id_promotora = promotora["Id_promotora"]
-    usuario = _get_usuario_actual()
-    dui_prom = usuario["DUI"]
-
-    # Distritos disponibles
     distritos = fetch_all(
         "SELECT Id_distrito, Nombre FROM distritos ORDER BY Nombre ASC"
     )
+
     if not distritos:
-        st.error(
-            "No hay distritos registrados. "
-            "El administrador debe crearlos primero en su panel."
-        )
+        st.info("Todavía no hay distritos creados. El administrador debe crearlos primero.")
         return
 
-    opciones_distrito = [
-        (d["Id_distrito"], d["Nombre"]) for d in distritos
-    ]
+    opciones = {f'{d["Id_distrito"]} - {d["Nombre"]}': d["Id_distrito"] for d in distritos}
 
     with st.form("form_crear_grupo"):
         nombre = st.text_input("Nombre del grupo")
-        id_distrito_sel = st.selectbox(
-            "Distrito al que pertenece el grupo",
-            options=[d[0] for d in opciones_distrito],
-            format_func=lambda did: next(
-                etiqueta for (idd, etiqueta) in opciones_distrito if idd == did
-            ),
-        )
+        opcion = st.selectbox("Distrito al que pertenece el grupo", list(opciones.keys()))
+        enviado = st.form_submit_button("Crear grupo")
 
-        crear = st.form_submit_button("Crear grupo")
-
-    if not crear:
+    if not enviado:
         return
 
     if not nombre.strip():
-        st.warning("Debes ingresar un nombre para el grupo.")
+        st.warning("Debes ingresar el nombre del grupo.")
         return
 
-    # Verificar que la promotora no tenga YA un grupo con ese nombre en ese distrito
-    ya_existe = fetch_one(
-        """
-        SELECT Id_grupo
-        FROM grupos
-        WHERE Nombre = %s
-          AND Id_distrito = %s
-          AND Id_promotora = %s
-        """,
-        (nombre.strip(), id_distrito_sel, id_promotora),
-    )
-    if ya_existe:
-        st.error(
-            "Ya existe un grupo con ese nombre en ese distrito creado por esta promotora. "
-            "Use otro nombre o revise la pestaña 'Mis grupos'."
-        )
-        return
+    id_distrito = opciones[opcion]
+    hoy = date.today()
+    dui_promotora = usuario["DUI"]
+
+    sql = """
+        INSERT INTO grupos
+            (Nombre, Id_distrito, Estado, Creado_por, Creado_en, Id_promotora, DUIs_promotoras)
+        VALUES
+            (%s,      %s,         %s,     %s,        %s,        %s,           %s)
+    """
 
     try:
-        execute(
-            """
-            INSERT INTO grupos
-                (Nombre, Id_distrito, Estado, Creado_por, Creado_en,
-                 Id_promotora, DUIs_promotoras)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """,
+        _, gid = execute(
+            sql,
             (
                 nombre.strip(),
-                id_distrito_sel,
+                id_distrito,
                 "ACTIVO",
-                id_promotora,           # usamos Id_promotora como 'Creado_por'
-                date.today(),
+                usuario["Nombre"],
+                hoy,
                 id_promotora,
-                dui_prom,               # guardamos el DUI de la promotora creadora
+                dui_promotora,
             ),
         )
-        st.success("Grupo creado correctamente.")
+        st.success(f"✅ Grupo creado correctamente (Id_grupo={gid}).")
     except IntegrityError as e:
-        st.error("Error de integridad al crear el grupo.")
-        st.exception(e)
-    except Exception as e:
-        st.error("Ocurrió un error inesperado al crear el grupo.")
-        st.exception(e)
+        st.error(
+            "No se pudo crear el grupo. "
+            "Posiblemente ya exista un grupo con ese nombre/ combinación de datos."
+        )
 
 
-# ----------------- Mis grupos + eliminar ----------------- #
-
-def _mis_grupos():
-    st.subheader("Listado de grupos de la promotora")
-
-    promotora = _get_promotora_actual()
-    id_promotora = promotora["Id_promotora"]
+# -------------------------------------------------------------------
+# Pantalla: Mis grupos (listar + eliminar)
+# -------------------------------------------------------------------
+def _mis_grupos(id_promotora):
+    st.subheader("Mis grupos")
 
     grupos = fetch_all(
         """
-        SELECT g.Id_grupo,
-               g.Nombre,
-               d.Nombre AS Distrito,
-               g.Estado,
-               g.Creado_en
+        SELECT
+            g.Id_grupo,
+            g.Nombre,
+            d.Nombre AS Distrito,
+            g.Estado,
+            g.Creado_en
         FROM grupos g
         JOIN distritos d ON g.Id_distrito = d.Id_distrito
         WHERE g.Id_promotora = %s
@@ -150,80 +132,70 @@ def _mis_grupos():
     )
 
     if not grupos:
-        st.info("Todavía no tiene grupos registrados.")
-    else:
-        st.table(grupos)
-
-    st.markdown("---")
-    st.subheader("Eliminar grupo")
-
-    if not grupos:
-        st.info("No hay grupos para eliminar.")
+        st.info("Aún no tienes grupos registrados.")
         return
 
-    opciones = [
-        (g["Id_grupo"], f"{g['Id_grupo']} - {g['Nombre']} ({g['Distrito']})")
-        for g in grupos
-    ]
+    st.write("### Listado de grupos")
+    st.dataframe(grupos, use_container_width=True)
 
-    id_grupo_sel = st.selectbox(
+    # ---- Eliminar grupo ----
+    st.write("### Eliminar grupo")
+    mapa_opciones = {
+        f'{g["Id_grupo"]} - {g["Nombre"]} ({g["Distrito"]})': g["Id_grupo"]
+        for g in grupos
+    }
+
+    etiqueta = st.selectbox(
         "Seleccione el grupo a eliminar",
-        options=[g[0] for g in opciones],
-        format_func=lambda gid: next(
-            etiqueta for (idg, etiqueta) in opciones if idg == gid
-        ),
+        list(mapa_opciones.keys()),
     )
+    id_grupo_sel = mapa_opciones[etiqueta]
 
     confirmar = st.checkbox(
         "Confirmo que deseo eliminar este grupo (no se puede deshacer)."
     )
-
-    if st.button("Eliminar grupo"):
-        if not confirmar:
-            st.warning("Debe marcar la casilla de confirmación antes de eliminar.")
-            return
-
+    if st.button("Eliminar grupo", type="primary", disabled=not confirmar):
         try:
             execute(
                 "DELETE FROM grupos WHERE Id_grupo = %s AND Id_promotora = %s",
                 (id_grupo_sel, id_promotora),
             )
-            st.success(
-                "Grupo eliminado correctamente. "
-                "Actualice la página para ver los cambios en la tabla."
-            )
-        except IntegrityError as e:
+            st.success("Grupo eliminado correctamente. Recarga la página para actualizar la tabla.")
+        except IntegrityError:
             st.error(
-                "No se pudo eliminar el grupo por restricciones de integridad. "
-                "Revise si el grupo tiene información relacionada en otras tablas."
+                "No se pudo eliminar el grupo. "
+                "Es posible que tenga información relacionada (por ejemplo directiva, reuniones, etc.)."
             )
-            st.exception(e)
-        except Exception as e:
-            st.error("Ocurrió un error inesperado al eliminar el grupo.")
-            st.exception(e)
 
 
-# ----------------- Panel principal de PROMOTORA ----------------- #
-
+# -------------------------------------------------------------------
+# Panel principal de PROMOTORA
+# -------------------------------------------------------------------
 def promotora_panel():
     """
-    Función que debe llamar el router cuando el rol del usuario es PROMOTORA.
-    Muestra las pestañas: Crear grupo, Mis grupos, Crear Directiva, Reportes.
+    Punto de entrada desde app.router() cuando el rol es PROMOTORA.
+    Muestra pestañas:
+    - Crear grupo
+    - Mis grupos
+    - Crear Directiva
+    - Reportes
     """
-    tabs = st.tabs(["Crear grupo", "Mis grupos", "Crear Directiva", "Reportes"])
+    usuario = _solo_promotora()
+    id_promotora = _get_promotora_id(usuario)
 
-    # Pestaña 0: crear grupo
+    tabs = st.tabs(
+        ["Crear grupo", "Mis grupos", "Crear Directiva", "Reportes"]
+    )
+
     with tabs[0]:
-        _crear_grupo()
+        _crear_grupo(usuario, id_promotora)
 
-    # Pestaña 1: ver / eliminar grupos
     with tabs[1]:
-        _mis_grupos()
+        _mis_grupos(id_promotora)
 
-    # Pestaña 2: crear usuario de directiva
     with tabs[2]:
-        crear_directiva_panel()
+        # Llama al módulo de directiva
+        crear_directiva_panel(usuario, id_promotora)
 
-    # Pestaña 3: placeholder para futuros reportes
     with tabs[3]:
-        st.info("Módulo de reportes en construcción.")
+        st.info("Módulo de reportes para promotora pendiente de implementar.")
