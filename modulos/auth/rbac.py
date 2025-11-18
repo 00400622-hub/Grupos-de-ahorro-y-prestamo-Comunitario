@@ -47,9 +47,11 @@ def require_auth() -> dict:
 def has_role(*roles_permitidos: str) -> dict:
     """
     Verifica que el usuario logueado tenga uno de los roles permitidos.
-    Uso típico:
+
+    Ejemplos:
         user = has_role("ADMINISTRADOR")
         user = has_role("PROMOTORA", "ADMINISTRADOR")
+
     - Si no hay sesión -> mismo comportamiento que require_auth().
     - Si hay sesión pero el rol no está en roles_permitidos -> error y st.stop().
     - Si todo bien -> devuelve el diccionario de usuario.
