@@ -2,11 +2,10 @@
 import streamlit as st
 
 from modulos.auth.login import login_screen
-from modulos.auth.rbac import get_user, clear_user, is_logged_in
+from modulos.auth.rbac import get_user, clear_user
 from modulos.admin.panel import admin_panel
 from modulos.promotora.grupos import promotora_panel
 from modulos.directiva.panel import directiva_panel  # si ya lo tienes
-
 
 st.set_page_config(page_title="SGI GAPC", layout="wide")
 
