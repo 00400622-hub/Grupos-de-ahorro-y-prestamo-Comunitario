@@ -1,8 +1,7 @@
 import datetime as dt
 import streamlit as st
-
 from modulos.config.conexion import fetch_all, fetch_one, execute
-from modulos.auth.rbac import require_auth, require_user_role
+from modulos.auth.rbac import require_auth, has_role
 
 
 # ==========================
