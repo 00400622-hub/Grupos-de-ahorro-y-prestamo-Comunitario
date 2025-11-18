@@ -1,7 +1,9 @@
+# modulos/admin/panel.py
 import datetime as dt
 import streamlit as st
+
 from modulos.config.conexion import fetch_all, fetch_one, execute
-from modulos.auth.rbac import require_auth, has_role
+from modulos.auth.rbac import require_auth, require_user_role
 
 
 # ==========================
@@ -12,11 +14,13 @@ def _crud_distritos():
     st.subheader("Distritos")
 
     # Listado
-    distritos = fetch_all("""
+    distritos = fetch_all(
+        """
         SELECT Id_distrito, Nombre, Estado, Creado_en
         FROM distritos
         ORDER BY Id_distrito ASC
-    """)
+        """
+    )
 
     st.write("### Lista de distritos")
     if distritos:
@@ -26,7 +30,9 @@ def _crud_distritos():
 
     st.write("---")
     st.write("### Crear nuevo distrito")
+
     nombre = st.text_input("Nombre del distrito")
+
     if st.button("Crear distrito"):
         if not nombre.strip():
             st.warning("Ingrese un nombre válido.")
@@ -37,14 +43,14 @@ def _crud_distritos():
                 (nombre.strip(), "ACTIVO", hoy),
             )
             st.success("Distrito creado correctamente.")
-            st.experimental_rerun()
+            st.rerun()
 
 
 # ==========================
 # Sincronizar promotora con usuario
 # ==========================
 
-def _sync_promotora_from_usuario(uid: int):
+def _sync_promotora_from_usuario(uid: int) -> None:
     """
     Si el usuario tiene rol PROMOTORA, asegura que exista fila en 'promotora'.
     """
@@ -57,6 +63,7 @@ def _sync_promotora_from_usuario(uid: int):
         """,
         (uid,),
     )
+
     if not usuario:
         return
 
@@ -64,10 +71,15 @@ def _sync_promotora_from_usuario(uid: int):
     if rol != "PROMOTORA":
         return
 
-    existe = fetch_one("SELECT Id_promotora FROM promotora WHERE DUI = %s LIMIT 1", (usuario["DUI"],))
+    # ¿Ya existe esa promotora?
+    existe = fetch_one(
+        "SELECT Id_promotora FROM promotora WHERE DUI = %s LIMIT 1",
+        (usuario["DUI"],),
+    )
     if existe:
         return
 
+    # Crear registro en tabla promotora
     execute(
         "INSERT INTO promotora (Nombre, DUI) VALUES (%s, %s)",
         (usuario["Nombre"], usuario["DUI"]),
@@ -81,12 +93,14 @@ def _sync_promotora_from_usuario(uid: int):
 def _crud_usuarios():
     st.subheader("Usuarios")
 
-    usuarios = fetch_all("""
+    usuarios = fetch_all(
+        """
         SELECT u.Id_usuario, u.Nombre, u.DUI, r.`Tipo de rol` AS Rol, u.Id_rol
         FROM Usuario u
         JOIN rol r ON r.Id_rol = u.Id_rol
         ORDER BY u.Id_usuario ASC
-    """)
+        """
+    )
 
     st.write("### Lista de usuarios")
     if usuarios:
@@ -114,33 +128,44 @@ def _crud_usuarios():
         else:
             id_rol = mapa_roles[rol_nombre]
             uid = execute(
-                "INSERT INTO Usuario (Nombre, DUI, Contraseña, Id_rol) VALUES (%s,%s,%s,%s)",
+                """
+                INSERT INTO Usuario (Nombre, DUI, Contraseña, Id_rol)
+                VALUES (%s, %s, %s, %s)
+                """,
                 (nombre.strip(), dui.strip(), contr.strip(), id_rol),
                 return_last_id=True,
             )
             # Si es promotora, sincronizar en tabla promotora
             _sync_promotora_from_usuario(uid)
             st.success(f"Usuario creado correctamente (Id_usuario={uid}).")
-            st.experimental_rerun()
+            st.rerun()
 
     st.write("---")
     st.write("### Eliminar usuario")
 
     if usuarios:
-        opciones = {f'{u["Id_usuario"]} - {u["Nombre"]} ({u["DUI"]})': u["Id_usuario"] for u in usuarios}
-        label_sel = st.selectbox("Seleccione el usuario a eliminar", list(opciones.keys()))
+        opciones = {
+            f'{u["Id_usuario"]} - {u["Nombre"]} ({u["DUI"]})': u["Id_usuario"]
+            for u in usuarios
+        }
+        label_sel = st.selectbox(
+            "Seleccione el usuario a eliminar", list(opciones.keys())
+        )
         uid_sel = opciones[label_sel]
-        confirmar = st.checkbox("Confirmo que deseo eliminar este usuario (no se puede deshacer).")
+
+        confirmar = st.checkbox(
+            "Confirmo que deseo eliminar este usuario (no se puede deshacer)."
+        )
         if st.button("Eliminar usuario"):
             if confirmar:
                 execute("DELETE FROM Usuario WHERE Id_usuario = %s", (uid_sel,))
                 st.success("Usuario eliminado.")
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.warning("Debe marcar la casilla de confirmación.")
     else:
         st.info("No hay usuarios para eliminar.")
-        
+
 
 # ==========================
 # PANEL ADMINISTRADOR
@@ -151,10 +176,10 @@ def _crud_usuarios():
 def admin_panel():
     st.title("Panel de Administración — SGI GAPC")
 
-    pestaña = st.tabs(["Distritos", "Usuarios"])
+    tabs = st.tabs(["Distritos", "Usuarios"])
 
-    with pestaña[0]:
+    with tabs[0]:
         _crud_distritos()
 
-    with pestaña[1]:
+    with tabs[1]:
         _crud_usuarios()
