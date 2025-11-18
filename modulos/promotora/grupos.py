@@ -1,8 +1,10 @@
 import streamlit as st
 from datetime import date
+from mysql.connector.errors import IntegrityError
 
 from modulos.config.conexion import fetch_all, fetch_one, execute
-from modulos.auth.rbac import require_auth, has_role, current_user
+from modulos.promotora.directiva import crear_directiva_panel   # ⬅⬅ AGREGAR ESTO
+
 
 
 # ----------------- helpers básicos ----------------- #
