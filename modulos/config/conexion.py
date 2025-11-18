@@ -1,81 +1,83 @@
 # modulos/config/conexion.py
-import contextlib
 import mysql.connector
-from mysql.connector import pooling
+from contextlib import contextmanager
 import streamlit as st
 
-# -------------------------------------------------------------------
-#  Configuración del pool de conexiones
-# -------------------------------------------------------------------
-# Ajusta estos valores a como ya los tenías antes (st.secrets o datos fijos)
-MYSQL_CONFIG = {
-    "host": st.secrets["mysql"]["host"],
-    "port": st.secrets["mysql"].get("port", 3306),
-    "user": st.secrets["mysql"]["user"],
-    "password": st.secrets["mysql"]["password"],
-    "database": st.secrets["mysql"]["database"],
-}
 
-POOL = pooling.MySQLConnectionPool(
-    pool_name="sgi_gapc_pool",
-    pool_size=5,
-    pool_reset_session=True,
-    **MYSQL_CONFIG,
-)
+def _get_mysql_params():
+    """
+    Obtiene los parámetros de conexión a MySQL.
 
-# -------------------------------------------------------------------
-#  Helper de conexión (context manager)
-# -------------------------------------------------------------------
-@contextlib.contextmanager
+    1) Primero intenta leerlos de st.secrets["mysql"].
+    2) Si no existe esa clave, usa un 'fallback' de desarrollo
+       que tú puedes rellenar con tus datos LOCALES (solo para pruebas).
+    """
+
+    # --- 1) Intentar leer desde st.secrets ---
+    if "mysql" in st.secrets:
+        cfg = st.secrets["mysql"]
+        return {
+            "host": cfg.get("host"),
+            "user": cfg.get("user"),
+            "password": cfg.get("password"),
+            "database": cfg.get("database"),
+            "port": int(cfg.get("port", 3306)),
+        }
+
+    # --- 2) Fallback de desarrollo (solo para cuando NO hay st.secrets) ---
+    # ⚠️ IMPORTANTE:
+    # Rellena estos valores en tu entorno local si quieres,
+    # pero NO subas jamás este archivo con credenciales reales a GitHub.
+    return {
+        "host": "TU_HOST_AQUI",        # p.ej. "xxxx-mysql.services.clever-cloud.com"
+        "user": "TU_USUARIO_AQUI",
+        "password": "TU_PASSWORD_AQUI",
+        "database": "TU_DATABASE_AQUI",
+        "port": 3306,
+    }
+
+
+@contextmanager
 def db_conn():
-    cnx = None
+    """Context manager que abre y cierra la conexión."""
+    params = _get_mysql_params()
+    cnx = mysql.connector.connect(**params)
     try:
-        cnx = POOL.get_connection()
         yield cnx
     finally:
-        if cnx is not None and cnx.is_connected():
-            cnx.close()
-
-
-# -------------------------------------------------------------------
-#  Helpers de consulta
-# -------------------------------------------------------------------
-def execute(sql: str, params=None, return_last_id: bool = False):
-    """
-    Ejecuta un INSERT/UPDATE/DELETE.
-    Si return_last_id=True, devuelve el lastrowid del cursor.
-    """
-    if params is None:
-        params = ()
-
-    with db_conn() as cnx:
-        cur = cnx.cursor()
-        cur.execute(sql, params)
-        cnx.commit()
-        if return_last_id:
-            return cur.lastrowid
-        return None
+        cnx.close()
 
 
 def fetch_one(sql: str, params=None):
-    """Devuelve UNA fila como dict o None."""
-    if params is None:
-        params = ()
-
+    """Ejecuta un SELECT y devuelve una sola fila como diccionario (o None)."""
     with db_conn() as cnx:
         cur = cnx.cursor(dictionary=True)
-        cur.execute(sql, params)
+        cur.execute(sql, params or ())
         row = cur.fetchone()
+        cur.close()
         return row
 
 
 def fetch_all(sql: str, params=None):
-    """Devuelve TODAS las filas como lista de dicts."""
-    if params is None:
-        params = ()
-
+    """Ejecuta un SELECT y devuelve todas las filas como lista de diccionarios."""
     with db_conn() as cnx:
         cur = cnx.cursor(dictionary=True)
-        cur.execute(sql, params)
+        cur.execute(sql, params or ())
         rows = cur.fetchall()
+        cur.close()
         return rows
+
+
+def execute(sql: str, params=None, return_last_id: bool = False):
+    """
+    Ejecuta un INSERT / UPDATE / DELETE.
+    Si return_last_id=True, devuelve el último Id autoincremental.
+    """
+    with db_conn() as cnx:
+        cur = cnx.cursor()
+        cur.execute(sql, params or ())
+        last_id = cur.lastrowid
+        cnx.commit()
+        cur.close()
+        if return_last_id:
+            return last_id
