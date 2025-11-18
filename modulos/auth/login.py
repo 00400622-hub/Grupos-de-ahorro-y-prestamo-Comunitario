@@ -2,7 +2,7 @@
 import streamlit as st
 import bcrypt
 from modulos.config.conexion import fetch_one
-from modulos.auth.rbac import set_user  # ← aquí usamos set_user del rbac
+from modulos.auth.rbac import set_user  # usamos set_user del rbac
 
 
 def _check_password(plain: str, hashed_or_plain_from_db: str) -> bool:
