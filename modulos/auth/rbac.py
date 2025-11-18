@@ -1,5 +1,4 @@
 # modulos/auth/rbac.py
-import functools
 import streamlit as st
 
 # Clave única donde guardamos el usuario en la sesión de Streamlit
@@ -7,7 +6,6 @@ _SESSION_KEY = "user"
 
 
 # ========== Sesión ==========
-
 def get_user() -> dict | None:
     """Devuelve el usuario actual o None si no hay sesión."""
     return st.session_state.get(_SESSION_KEY)
@@ -29,17 +27,15 @@ def is_logged_in() -> bool:
 
 
 # ========== Decoradores ==========
-
 def require_auth(func):
     """
-    Decorador: exige que haya sesión.
+    Decorador simple: exige que haya sesión.
     Uso:
         @require_auth
-        def pantalla():
+        def admin_panel():
             ...
     """
 
-    @functools.wraps(func)
     def wrapper(*args, **kwargs):
         if not is_logged_in():
             st.error("No hay una sesión activa.")
@@ -49,18 +45,14 @@ def require_auth(func):
     return wrapper
 
 
-def require_user_role(*roles_permitidos: str):
+def has_role(*roles_permitidos: str):
     """
     Decorador: exige que el rol del usuario esté en roles_permitidos.
-    Uso:
-        @require_auth
-        @require_user_role("ADMINISTRADOR")
-        def pantalla_admin():
-            ...
+    Ejemplo:
+        @has_role("ADMINISTRADOR", "PROMOTORA")
     """
 
     def decorator(func):
-        @functools.wraps(func)
         def wrapper(*args, **kwargs):
             user = get_user()
             if not user:
@@ -79,7 +71,3 @@ def require_user_role(*roles_permitidos: str):
         return wrapper
 
     return decorator
-
-
-# Alias para compatibilidad con código viejo
-has_role = require_user_role
