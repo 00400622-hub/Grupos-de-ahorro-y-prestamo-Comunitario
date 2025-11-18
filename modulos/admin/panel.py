@@ -295,19 +295,18 @@ def _crud_usuarios():
 # ---------- panel principal de ADMIN ---------- #
 
 def admin_panel():
-    require_auth()
-    if not has_role("ADMINISTRADOR"):
-        st.error("Acceso restringido al rol ADMINISTRADOR.")
-        st.stop()
+    # Esta función ya verifica que haya sesión y que el rol sea ADMINISTRADOR
+    user = require_admin()
 
-    tab1, tab2, tab3 = st.tabs(
-        ["Distritos", "Usuarios / Promotoras", "Reportes globales"]
-    )
+    st.title("Panel de Administrador")
 
+    # A partir de aquí deja TODO el resto de tu código tal como lo tenías
+    # (tabs de distritos, usuarios, etc.)
+    # Ejemplo:
+    tab1, tab2, tab3 = st.tabs(["Distritos", "Usuarios", "Promotoras"])
     with tab1:
         _crud_distritos()
     with tab2:
         _crud_usuarios()
     with tab3:
-        _titulo("Reportes globales")
-        st.info("Aquí luego puedes agregar reportes consolidados para el administrador.")
+        _sync_promotoras()
