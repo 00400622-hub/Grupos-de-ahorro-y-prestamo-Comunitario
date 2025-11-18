@@ -33,57 +33,40 @@ def _execute(sql, params=None, return_last_id=False):
 
 
 # -----------------------------
-# Helpers de sesión / usuario
+# Helpers de sesión / usuario (versión simple)
 # -----------------------------
-def _get_usuario_actual():
+def _obtener_usuario_de_sesion():
     """
-    Intenta recuperar el usuario actual desde st.session_state.
-    - Primero busca la clave 'usuario'.
-    - Si no existe, busca cualquier diccionario que parezca ser un usuario
-      (que tenga llaves tipo DUI / Id_usuario y Rol / Id_rol).
+    Versión simple: usamos exactamente la misma lógica que te funcionaba antes.
+    Si no existe st.session_state["usuario"], cortamos.
     """
-    usuario = st.session_state.get("usuario")
+    if "usuario" not in st.session_state:
+        st.error("No hay una sesión activa. Inicia sesión nuevamente.")
+        st.stop()
 
-    if usuario:
-        return usuario
-
-    # Buscar en todos los valores del session_state
-    for v in st.session_state.values():
-        if isinstance(v, dict):
-            keys = {k.lower() for k in v.keys()}
-            if ("dui" in keys or "id_usuario" in keys) and (
-                "rol" in keys or "id_rol" in keys
-            ):
-                st.session_state["usuario"] = v
-                return v
-
-    # Si de verdad no encontramos nada
-    st.error("No hay una sesión activa. Vuelve a la pantalla de inicio e inicia sesión.")
-    st.stop()
+    return st.session_state["usuario"]
 
 
-def _solo_promotora():
-    u = _get_usuario_actual()
-    rol = (
-        u.get("Rol")
-        or u.get("rol")
-        or u.get("Tipo_de_rol")
-        or u.get("tipo_de_rol")
+def _validar_promotora(usuario):
+    rol = str(
+        usuario.get("Rol")
+        or usuario.get("rol")
+        or usuario.get("Tipo de rol")
+        or usuario.get("tipo de rol")
         or ""
-    )
-    if str(rol).upper() != "PROMOTORA":
+    ).upper()
+
+    if rol != "PROMOTORA":
         st.error("Acceso restringido: esta sección es solo para Promotoras.")
         st.stop()
-    return u
 
 
-def _obtener_promotora_actual():
+def _obtener_promotora_desde_usuario(usuario):
     """
-    A partir del usuario logueado (tabla Usuario) se asegura que exista
-    un registro en la tabla 'promotora' con el mismo DUI.
+    A partir de los datos del usuario logueado en la tabla Usuario,
+    se asegura que exista un registro en la tabla 'promotora' con el mismo DUI.
     Devuelve el registro de la tabla promotora.
     """
-    usuario = _solo_promotora()
     dui = usuario.get("DUI") or usuario.get("dui")
     nombre = usuario.get("Nombre") or usuario.get("nombre")
 
@@ -91,7 +74,6 @@ def _obtener_promotora_actual():
         st.error("No se encontró el DUI en la sesión del usuario.")
         st.stop()
 
-    # ¿Ya existe en la tabla promotora?
     fila = _fetch_one("SELECT * FROM promotora WHERE DUI = %s", (dui,))
     if fila:
         return fila
@@ -110,6 +92,9 @@ def _obtener_promotora_actual():
     }
 
 
+# -----------------------------
+# Helpers de datos
+# -----------------------------
 def _listar_distritos():
     return _fetch_all(
         "SELECT Id_distrito, Nombre FROM distritos ORDER BY Nombre ASC"
@@ -132,7 +117,7 @@ def _listar_grupos_de_promotora(id_promotora):
 
 
 # -----------------------------
-# Vistas: Crear grupo
+# Vista: Crear grupo
 # -----------------------------
 def _vista_crear_grupo(promotora, usuario):
     st.subheader("Registrar un nuevo grupo de ahorro")
@@ -159,16 +144,14 @@ def _vista_crear_grupo(promotora, usuario):
             id_distrito = opciones[etiqueta_distrito]
             hoy = date.today()
 
-            # Id_usuario que está creando
             id_usuario = (
                 usuario.get("Id_usuario")
                 or usuario.get("id_usuario")
                 or usuario.get("ID_usuario")
             )
 
-            # DUIs_promotoras: de momento solo la promotora actual
             dui_prom = promotora["DUI"]
-            duis_promotoras = dui_prom  # se puede ampliar a "dui1,dui2,..." después
+            duis_promotoras = dui_prom  # en el futuro puedes concatenar más DUIs
 
             sql = """
                 INSERT INTO grupos
@@ -197,7 +180,7 @@ def _vista_crear_grupo(promotora, usuario):
 
 
 # -----------------------------
-# Vistas: Mis grupos
+# Vista: Mis grupos
 # -----------------------------
 def _vista_mis_grupos(promotora):
     st.subheader("Mis grupos")
@@ -207,15 +190,9 @@ def _vista_mis_grupos(promotora):
         st.info("Todavía no has creado grupos.")
         return
 
-    # Mostrar tabla
     st.write("**Listado de grupos**")
-    st.dataframe(
-        grupos,
-        use_container_width=True,
-        hide_index=True,
-    )
+    st.dataframe(grupos, use_container_width=True, hide_index=True)
 
-    # Sección para eliminar
     st.markdown("### Eliminar grupo")
 
     mapa = {
@@ -300,7 +277,7 @@ def _vista_crear_directiva(promotora):
                 st.warning("Todos los campos son obligatorios.")
                 return
 
-            # Validar que no exista ese DUI en la tabla Usuario
+            # Validar DUI único en Usuario
             existente = _fetch_one(
                 "SELECT Id_usuario FROM Usuario WHERE DUI = %s", (dui.strip(),)
             )
@@ -321,7 +298,7 @@ def _vista_crear_directiva(promotora):
             hash_pass = _hash_password(contrasenia)
 
             try:
-                # 1) Crear en tabla Usuario (para que pueda iniciar sesión)
+                # 1) Crear usuario para login
                 id_usuario = _execute(
                     """
                     INSERT INTO Usuario (Nombre, DUI, Contraseña, Id_rol)
@@ -331,7 +308,7 @@ def _vista_crear_directiva(promotora):
                     return_last_id=True,
                 )
 
-                # 2) Crear en tabla directiva (info adicional y vínculo al grupo)
+                # 2) Registrar en tabla directiva
                 _execute(
                     """
                     INSERT INTO directiva
@@ -352,8 +329,14 @@ def _vista_crear_directiva(promotora):
 # Panel principal de Promotora
 # -----------------------------
 def promotora_panel():
-    usuario = _solo_promotora()
-    promotora = _obtener_promotora_actual()
+    # 1) Obtener usuario desde la sesión EXACTAMENTE como antes
+    usuario = _obtener_usuario_de_sesion()
+
+    # 2) Validar que el rol sea PROMOTORA
+    _validar_promotora(usuario)
+
+    # 3) Obtener/crear registro en tabla promotora
+    promotora = _obtener_promotora_desde_usuario(usuario)
 
     # Sidebar de sesión
     st.sidebar.markdown("### Sesión")
