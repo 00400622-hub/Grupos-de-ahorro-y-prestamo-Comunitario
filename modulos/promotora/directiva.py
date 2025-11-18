@@ -1,11 +1,24 @@
 import streamlit as st
 from datetime import date
+from mysql.connector.errors import IntegrityError
+
 from modulos.config.conexion import fetch_all, fetch_one, execute
+from modulos.promotora.directiva import crear_directiva_panel
+
+
+# ----------------- Helpers comunes ----------------- #
+
+def _get_usuario_actual():
+    """Devuelve el diccionario de usuario guardado en sesión."""
+    return st.session_state.get("usuario")
 
 
 def _get_promotora_actual():
-    """Devuelve el registro de la promotora asociado al usuario logueado."""
-    user = st.session_state.get("usuario")
+    """
+    Devuelve el registro de la promotora asociada al usuario logueado
+    (usando el DUI del usuario).
+    """
+    user = _get_usuario_actual()
     if not user:
         return None
 
@@ -20,149 +33,137 @@ def _get_promotora_actual():
     return prom
 
 
-def crear_directiva_panel():
-    st.header("Crear usuario de Directiva")
+def _cargar_distritos():
+    """Devuelve la lista de distritos (Id_distrito, Nombre)."""
+    return fetch_all(
+        "SELECT Id_distrito, Nombre FROM distritos ORDER BY Id_distrito ASC"
+    )
 
-    # 1. Obtener promotora actual
+
+# ----------------- Pestaña: Crear grupo ----------------- #
+
+def _crear_grupo():
+    st.header("Crear grupo")
+
+    # 1. Validar promotora actual
     promotora = _get_promotora_actual()
     if not promotora:
         st.error(
-            "No se encontró una promotora asociada al usuario actual. "
-            "Verifique que este usuario esté registrado en la tabla 'promotora'."
+            "No se encontró una promotora asociada a este usuario. "
+            "Verifica que el DUI de este usuario exista en la tabla 'promotora'."
         )
         return
 
     id_promotora = promotora["Id_promotora"]
     dui_promotora = promotora["DUI"]
 
-    st.info(f"Promotora actual: **{promotora['Nombre']}** (DUI: {dui_promotora})")
-
-    # 2. Cargar grupos de esta promotora
-    grupos = fetch_all(
-        """
-        SELECT g.Id_grupo, g.Nombre, d.Nombre AS Distrito
-        FROM grupos g
-        JOIN distritos d ON g.Id_distrito = d.Id_distrito
-        WHERE g.Id_promotora = %s
-        ORDER BY g.Nombre ASC
-        """,
-        (id_promotora,),
+    st.info(
+        f"Sesión de promotora: **{promotora['Nombre']}** "
+        f"(DUI: {dui_promotora}, Id_promotora: {id_promotora})"
     )
 
-    if not grupos:
+    # 2. Cargar distritos
+    distritos = _cargar_distritos()
+    if not distritos:
         st.warning(
-            "Todavía no tienes grupos registrados. "
-            "Primero crea al menos un grupo para poder asignarlo a una directiva."
+            "No hay distritos registrados todavía. "
+            "Pide al administrador que cree los distritos primero."
         )
         return
 
-    opciones_grupo = {
-        f"{g['Id_grupo']} - {g['Nombre']} ({g['Distrito']})": g["Id_grupo"]
-        for g in grupos
+    opciones_distrito = {
+        f"{d['Id_distrito']} - {d['Nombre']}": d["Id_distrito"]
+        for d in distritos
     }
 
-    with st.form("form_crear_directiva"):
-        st.subheader("Datos de la directiva")
-
-        nombre = st.text_input("Nombre completo de la directiva")
-        dui_directiva = st.text_input("DUI de la directiva (sin guiones o como prefieras)")
-        contrasenia = st.text_input("Contraseña para la directiva", type="password")
-
-        st.subheader("Grupo asignado")
-        etiqueta_grupo = st.selectbox(
-            "Seleccione el grupo al que pertenece esta directiva",
-            list(opciones_grupo.keys()),
+    # 3. Formulario
+    with st.form("form_crear_grupo"):
+        nombre = st.text_input("Nombre del grupo")
+        etiqueta_dist = st.selectbox(
+            "Distrito al que pertenece el grupo",
+            list(opciones_distrito.keys())
         )
-        id_grupo = opciones_grupo[etiqueta_grupo]
+        id_distrito = opciones_distrito[etiqueta_dist]
 
-        crear_btn = st.form_submit_button("Crear usuario de Directiva")
+        crear_btn = st.form_submit_button("Crear grupo")
 
     if not crear_btn:
         return
 
-    # Validaciones básicas
-    if not nombre.strip() or not dui_directiva.strip() or not contrasenia:
-        st.error("Todos los campos son obligatorios.")
+    if not nombre.strip():
+        st.error("El nombre del grupo es obligatorio.")
         return
 
-    # 3. Verificar que el grupo aún no tenga directiva
-    existe_dir = fetch_one(
-        "SELECT Id_directiva FROM directiva WHERE Id_grupo = %s",
-        (id_grupo,),
-    )
-    if existe_dir:
-        st.error(
-            "Este grupo ya tiene una directiva asignada. "
-            "Si necesitas cambiarla, deberás editarla o eliminarla manualmente."
-        )
-        return
+    hoy = date.today()
+    usuario = _get_usuario_actual()
+    id_usuario = usuario.get("Id_usuario") if usuario else None
 
-    # 4. Verificar que no exista ya un usuario con ese DUI
-    usuario_existente = fetch_one(
-        "SELECT Id_usuario, Nombre, DUI FROM Usuario WHERE DUI = %s",
-        (dui_directiva.strip(),),
-    )
-    if usuario_existente:
-        st.error(
-            f"Ya existe un usuario con ese DUI ({usuario_existente['DUI']}). "
-            "Usa otro DUI o edita el usuario existente."
-        )
-        return
-
-    # 5. Obtener el Id_rol de DIRECTIVA
-    rol_dir = fetch_one(
-        "SELECT Id_rol FROM rol WHERE `Tipo de rol` = 'DIRECTIVA'"
-    )
-    if not rol_dir:
-        st.error(
-            "No se encontró el rol 'DIRECTIVA' en la tabla 'rol'. "
-            "Crea ese rol primero."
-        )
-        return
-
-    id_rol_directiva = rol_dir["Id_rol"]
-
-    # 6. Crear el usuario en la tabla Usuario
-    uid = execute(
+    # 4. Insertar grupo
+    try:
+        sql = """
+            INSERT INTO grupos
+                (Nombre, Id_distrito, Estado, Creado_por, Creado_en,
+                 Id_promotora, DUIs_promotoras)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
         """
-        INSERT INTO Usuario (Nombre, DUI, Contraseña, Id_rol)
-        VALUES (%s, %s, %s, %s)
-        """,
-        (nombre.strip(), dui_directiva.strip(), contrasenia, id_rol_directiva),
-    )
-
-    # 7. Registrar en la tabla directiva
-    execute(
-        """
-        INSERT INTO directiva (Nombre, DUI, Id_grupo, Creado_en)
-        VALUES (%s, %s, %s, %s)
-        """,
-        (nombre.strip(), dui_directiva.strip(), id_grupo, date.today()),
-    )
+        # DUIs_promotoras: empezamos con el DUI de esta promotora
+        gid = execute(
+            sql,
+            (
+                nombre.strip(),
+                id_distrito,
+                "ACTIVO",
+                id_usuario,
+                hoy,
+                id_promotora,
+                dui_promotora,
+            ),
+        )
+    except IntegrityError:
+        # Por si tienes un UNIQUE (Nombre, Id_distrito)
+        st.error(
+            "Ya existe un grupo con ese nombre en el mismo distrito. "
+            "Elige otro nombre o distrito."
+        )
+        return
 
     st.success(
-        f"Usuario de directiva creado correctamente (Id_usuario={uid}) "
-        f"y asignado al grupo {etiqueta_grupo}."
+        f"Grupo creado correctamente (Id_grupo={gid}) "
+        f"en el distrito {etiqueta_dist}."
     )
+
+
+# ----------------- Pestaña: Mis grupos ----------------- #
+
+def _mis_grupos():
+    st.header("Mis grupos")
+
+    promotora = _get_promotora_actual()
+    if not promotora:
+        st.error(
+            "No se encontró una promotora asociada a este usuario. "
+            "Verifica que el DUI exista en la tabla 'promotora'."
+        )
+        return
+
+    id_promotora = promotora["Id_promotora"]
+    dui_promotora = promotora["DUI"]
 
     st.caption(
-        "Recuerda: la directiva usará ese DUI y contraseña para iniciar sesión "
-        "con el rol DIRECTIVA y solo verá la información del grupo asignado."
+        f"Mostrando grupos donde esta promotora está asociada "
+        f"(Id_promotora={id_promotora}, DUI {dui_promotora})."
     )
 
-    # 8. Mostrar directivas registradas para los grupos de esta promotora
-    st.subheader("Directivas registradas en tus grupos")
-
-    directivas = fetch_all(
+    # Filtrado por Id_promotora (grupos creados por ella)
+    grupos = fetch_all(
         """
-        SELECT dir.Id_directiva,
-               dir.Nombre AS Directiva,
-               dir.DUI,
-               g.Id_grupo,
-               g.Nombre AS Grupo,
-               d.Nombre AS Distrito
-        FROM directiva dir
-        JOIN grupos g ON dir.Id_grupo = g.Id_grupo
+        SELECT g.Id_grupo,
+               g.Nombre,
+               d.Nombre AS Distrito,
+               g.Estado,
+               g.Creado_en,
+               g.DUIs_promotoras
+        FROM grupos g
         JOIN distritos d ON g.Id_distrito = d.Id_distrito
         WHERE g.Id_promotora = %s
         ORDER BY g.Id_grupo ASC
@@ -170,8 +171,77 @@ def crear_directiva_panel():
         (id_promotora,),
     )
 
-    if not directivas:
-        st.info("Todavía no hay directivas registradas para tus grupos.")
+    if not grupos:
+        st.info("Todavía no tienes grupos registrados.")
         return
 
-    st.table(directivas)
+    # Mostrar tabla
+    st.subheader("Listado de grupos")
+    st.table(grupos)
+
+    # ------------ Sección para eliminar grupo ------------ #
+    st.subheader("Eliminar grupo")
+
+    opciones_grupo = {
+        f"{g['Id_grupo']} - {g['Nombre']} ({g['Distrito']})": g["Id_grupo"]
+        for g in grupos
+    }
+
+    etiqueta_sel = st.selectbox(
+        "Seleccione el grupo a eliminar",
+        list(opciones_grupo.keys())
+    )
+    id_grupo_sel = opciones_grupo[etiqueta_sel]
+
+    confirmar = st.checkbox(
+        "Confirmo que deseo eliminar este grupo (no se puede deshacer)."
+    )
+
+    if st.button("Eliminar grupo"):
+        if not confirmar:
+            st.warning("Marca la casilla de confirmación antes de eliminar.")
+            return
+
+        # Podrías validar que no haya registros dependientes (directiva, etc.)
+        execute("DELETE FROM grupos WHERE Id_grupo = %s", (id_grupo_sel,))
+        st.success(f"Grupo {etiqueta_sel} eliminado correctamente.")
+        st.experimental_rerun()
+
+
+# ----------------- Pestaña: Reportes (placeholder) ----------------- #
+
+def _reportes_promotora():
+    st.header("Reportes de promotora")
+    st.info(
+        "Aquí puedes implementar más adelante reportes por distrito, "
+        "cantidad de grupos, etc. De momento es solo un espacio reservado."
+    )
+
+
+# ----------------- Panel principal de promotora ----------------- #
+
+def promotora_panel():
+    """
+    Panel principal que se llama desde app.py cuando el rol es PROMOTORA.
+    Muestra las pestañas:
+      - Crear grupo
+      - Mis grupos
+      - Crear Directiva
+      - Reportes
+    """
+    st.title("Panel de Promotora")
+
+    tabs = st.tabs(["Crear grupo", "Mis grupos", "Crear Directiva", "Reportes"])
+
+    with tabs[0]:
+        _crear_grupo()
+
+    with tabs[1]:
+        _mis_grupos()
+
+    with tabs[2]:
+        # 👉 Llamamos al panel para crear usuarios de directiva
+        crear_directiva_panel()
+
+    with tabs[3]:
+        _reportes_promotora()
