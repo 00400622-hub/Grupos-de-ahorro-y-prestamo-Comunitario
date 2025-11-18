@@ -216,7 +216,7 @@ def _crud_usuarios():
 # PANEL ADMINISTRADOR
 # ==========================
 
-@require_auth()
+@require_auth          # <-- SIN paréntesis
 @has_role("ADMINISTRADOR")
 def admin_panel():
     st.title("Panel de Administración — SGI GAPC")
