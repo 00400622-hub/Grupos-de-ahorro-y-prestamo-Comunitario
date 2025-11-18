@@ -1,3 +1,5 @@
+# modulos/promotora/directiva.py
+
 import streamlit as st
 from datetime import date
 from mysql.connector.errors import IntegrityError
@@ -5,153 +7,133 @@ from mysql.connector.errors import IntegrityError
 from modulos.config.conexion import fetch_all, fetch_one, execute
 
 
-def _get_usuario_actual():
-    """Devuelve el dict de usuario que se guardó en sesión al hacer login."""
-    usuario = st.session_state.get("usuario")
-    if not usuario:
-        st.error("No hay una sesión activa.")
-        st.stop()
-    return usuario
+def _normalizar_dui(txt: str) -> str:
+    """Deja solo dígitos en el DUI."""
+    return "".join(ch for ch in (txt or "") if ch.isdigit())
 
 
-def _get_promotora_actual():
-    """Busca en la tabla promotora usando el DUI del usuario logueado."""
-    usuario = _get_usuario_actual()
-    dui = usuario["DUI"]
-
-    promotora = fetch_one(
-        "SELECT Id_promotora, Nombre FROM promotora WHERE DUI = %s",
-        (dui,),
-    )
-    if not promotora:
+def _obtener_id_rol_directiva():
+    """
+    Devuelve el Id_rol de la tabla 'rol' para el tipo DIRECTIVA.
+    Asegúrate de tener un registro en rol con 'Tipo de rol' = 'DIRECTIVA'.
+    """
+    fila = fetch_one("SELECT Id_rol FROM rol WHERE `Tipo de rol` = 'DIRECTIVA'")
+    if not fila:
         st.error(
-            f"No se encontró una promotora registrada para el DUI {dui}. "
-            "Pida al administrador que revise la tabla 'promotora'."
+            "No se encontró el rol 'DIRECTIVA' en la tabla 'rol'. "
+            "Crea ese rol en phpMyAdmin primero."
         )
         st.stop()
+    return fila["Id_rol"]
 
-    return promotora
 
-
-def crear_directiva_panel():
+def crear_directiva_panel(usuario, id_promotora: int):
     """
-    Pestaña 'Crear Directiva' para la PROMOTORA.
-    Crea:
-      - registro en tabla 'usuario' con rol DIRECTIVA
-      - registro en tabla 'directiva' vinculado a un grupo
+    Panel para que la promotora cree usuarios de DIRECTIVA.
+
+    Requisitos:
+    - Solo se listan grupos cuyo Id_promotora = id_promotora.
+    - Se crea:
+        1) Usuario en tabla 'usuario' con rol DIRECTIVA.
+        2) Registro en tabla 'directiva' (Id_grupo, Nombre, DUI, Creado_en).
     """
+    st.subheader("Crear usuario de Directiva para un grupo")
 
-    st.header("Crear usuario para Directiva del grupo")
-
-    promotora = _get_promotora_actual()
-    id_promotora = promotora["Id_promotora"]
-
-    # 1. Obtener los grupos de ESTA promotora
+    # ------------------------------------------------------------------
+    # 1. Obtener grupos de esta promotora
+    # ------------------------------------------------------------------
     grupos = fetch_all(
         """
-        SELECT g.Id_grupo, g.Nombre, d.Nombre AS Distrito
-        FROM grupos g
-        JOIN distritos d ON g.Id_distrito = d.Id_distrito
-        WHERE g.Id_promotora = %s
-        ORDER BY g.Nombre ASC
+        SELECT Id_grupo, Nombre
+        FROM grupos
+        WHERE Id_promotora = %s
+        ORDER BY Nombre ASC
         """,
         (id_promotora,),
     )
 
     if not grupos:
-        st.info(
-            "Todavía no tiene grupos registrados. "
-            "Primero cree un grupo en la pestaña **Crear grupo**."
-        )
+        st.info("Todavía no tienes grupos creados. Crea un grupo antes de asignar una directiva.")
         return
 
-    # Opciones para el selectbox
-    opciones_grupo = [
-        (g["Id_grupo"], f"{g['Nombre']} ({g['Distrito']})") for g in grupos
-    ]
+    opciones = {
+        f'{g["Id_grupo"]} - {g["Nombre"]}': g["Id_grupo"] for g in grupos
+    }
 
-    # 2. Necesitamos el Id_rol para el rol DIRECTIVA
-    rol_directiva = fetch_one(
-        "SELECT Id_rol FROM rol WHERE `Tipo de rol` = 'DIRECTIVA'"
-    )
-    if not rol_directiva:
-        st.error(
-            "No existe el rol 'DIRECTIVA' en la tabla 'rol'. "
-            "Regístrelo primero en phpMyAdmin."
-        )
-        return
-
-    id_rol_directiva = rol_directiva["Id_rol"]
-
-    st.write(
-        "Este formulario crea un usuario que será compartido por "
-        "Presidenta y Secretaria del grupo (misma cuenta)."
-    )
-
+    # ------------------------------------------------------------------
+    # 2. Formulario
+    # ------------------------------------------------------------------
     with st.form("form_crear_directiva"):
-        nombre = st.text_input("Nombre completo de la Directiva")
-        dui = st.text_input("DUI de la Directiva (solo números o con guión)")
-        contrasenia = st.text_input("Contraseña para el usuario", type="password")
+        nombre = st.text_input("Nombre de la directiva")
+        dui_in = st.text_input("DUI de la directiva (con o sin guion)")
+        password = st.text_input("Contraseña inicial", type="password")
+        etiqueta = st.selectbox("Grupo al que pertenece", list(opciones.keys()))
+        enviado = st.form_submit_button("Crear usuario de directiva")
 
-        id_grupo_sel = st.selectbox(
-            "Grupo al que se asignará la Directiva",
-            options=[g[0] for g in opciones_grupo],
-            format_func=lambda gid: next(
-                etiqueta for (idg, etiqueta) in opciones_grupo if idg == gid
-            ),
-        )
-
-        crear = st.form_submit_button("Crear usuario de Directiva")
-
-    if not crear:
+    if not enviado:
+        st.info("Complete los campos y presione 'Crear usuario de directiva'.")
         return
 
-    # Validaciones básicas
-    if not nombre.strip() or not dui.strip() or not contrasenia:
+    nombre = nombre.strip()
+    dui = _normalizar_dui(dui_in)
+
+    if not nombre or not dui or not password:
         st.warning("Todos los campos son obligatorios.")
         return
 
-    # 3. Verificar que el grupo no tenga ya una directiva asignada
-    ya_existe = fetch_one(
-        "SELECT Id_directiva FROM directiva WHERE Id_grupo = %s",
-        (id_grupo_sel,),
-    )
-    if ya_existe:
-        st.error(
-            "Este grupo ya tiene un usuario de Directiva asignado. "
-            "Si necesita cambiarlo, el administrador debe modificarlo desde la base de datos."
-        )
+    if len(dui) != 9:
+        st.warning("El DUI debe tener 9 dígitos (sin contar el guion).")
         return
 
+    id_grupo = opciones[etiqueta]
+
+    # ------------------------------------------------------------------
+    # 3. Verificar si ya existe una directiva para ese grupo (opcional)
+    # ------------------------------------------------------------------
+    existente = fetch_one(
+        "SELECT Id_directiva FROM directiva WHERE Id_grupo = %s",
+        (id_grupo,),
+    )
+    if existente:
+        st.warning("Este grupo ya tiene una directiva registrada.")
+        return
+
+    # ------------------------------------------------------------------
+    # 4. Obtener Id_rol para DIRECTIVA
+    # ------------------------------------------------------------------
+    id_rol_directiva = _obtener_id_rol_directiva()
+
+    # ------------------------------------------------------------------
+    # 5. Crear usuario + registro en tabla directiva
+    # ------------------------------------------------------------------
+    hoy = date.today()
+
     try:
-        # 4. Crear el usuario en tabla 'usuario'
-        execute(
+        # 5.1 Usuario
+        _, id_usuario = execute(
             """
             INSERT INTO usuario (Nombre, DUI, Contraseña, Id_rol)
             VALUES (%s, %s, %s, %s)
             """,
-            (nombre.strip(), dui.strip(), contrasenia, id_rol_directiva),
+            (nombre, dui, password, id_rol_directiva),
         )
 
-        # 5. Crear el registro en tabla 'directiva'
+        # 5.2 Registro directiva
         execute(
             """
-            INSERT INTO directiva (Nombre, DUI, Contraseña, Id_grupo, Creado_en)
+            INSERT INTO directiva (Id_grupo, Nombre, DUI, Creado_en, Id_usuario)
             VALUES (%s, %s, %s, %s, %s)
             """,
-            (nombre.strip(), dui.strip(), contrasenia, id_grupo_sel, date.today()),
+            (id_grupo, nombre, dui, hoy, id_usuario),
         )
 
         st.success(
-            "Usuario de Directiva creado correctamente y asignado al grupo seleccionado."
+            f"✅ Directiva creada correctamente para el grupo {etiqueta}. "
+            f"El usuario podrá iniciar sesión con el DUI {dui}."
         )
 
     except IntegrityError as e:
         st.error(
-            "Error de integridad al crear la Directiva. "
-            "Revise si ya existe un usuario con ese DUI o una directiva para ese grupo."
+            "No se pudo crear la directiva. "
+            "Verifica que el DUI no esté repetido en la tabla 'usuario' o 'directiva'."
         )
-        st.exception(e)
-    except Exception as e:
-        st.error("Ocurrió un error inesperado al crear la Directiva.")
-        st.exception(e)
