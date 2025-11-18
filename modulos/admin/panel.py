@@ -1,4 +1,3 @@
-import datetime as dt
 import streamlit as st
 from modulos.config.conexion import fetch_all, fetch_one, execute
 from modulos.auth.rbac import require_auth, has_role
@@ -11,7 +10,7 @@ from modulos.auth.rbac import require_auth, has_role
 def _crud_distritos():
     st.subheader("Distritos")
 
-    # Listado SIN Estado ni Creado_en (tu tabla no los tiene)
+    # Listado de distritos (solo Id y Nombre porque tu tabla solo tiene eso)
     distritos = fetch_all("""
         SELECT Id_distrito, Nombre
         FROM distritos
@@ -24,6 +23,7 @@ def _crud_distritos():
     else:
         st.info("No hay distritos registrados.")
 
+    # -------- Crear distrito --------
     st.write("---")
     st.write("### Crear nuevo distrito")
     nombre = st.text_input("Nombre del distrito")
@@ -37,13 +37,13 @@ def _crud_distritos():
                 (nombre.strip(),)
             )
             st.success("Distrito creado correctamente.")
-            st.experimental_rerun()
+            st.rerun()
 
+    # -------- Eliminar distrito --------
     st.write("---")
     st.write("### Eliminar distrito")
 
     if distritos:
-        # Mapa etiqueta → Id_distrito
         opciones = {
             f'{d["Id_distrito"]} - {d["Nombre"]}': d["Id_distrito"]
             for d in distritos
@@ -63,10 +63,13 @@ def _crud_distritos():
                 st.warning("Debe marcar la casilla de confirmación.")
             else:
                 try:
-                    execute("DELETE FROM distritos WHERE Id_distrito = %s", (id_sel,))
+                    execute(
+                        "DELETE FROM distritos WHERE Id_distrito = %s",
+                        (id_sel,)
+                    )
                     st.success("Distrito eliminado correctamente.")
-                    st.experimental_rerun()
-                except Exception as e:
+                    st.rerun()
+                except Exception:
                     st.error(
                         "No se pudo eliminar el distrito. "
                         "Verifique si está siendo usado en otros registros."
@@ -132,6 +135,7 @@ def _crud_usuarios():
     else:
         st.info("No hay usuarios registrados.")
 
+    # -------- Crear usuario --------
     st.write("---")
     st.write("### Crear usuario")
 
@@ -160,8 +164,9 @@ def _crud_usuarios():
             # Si es promotora, sincronizar en tabla promotora
             _sync_promotora_from_usuario(uid)
             st.success(f"Usuario creado correctamente (Id_usuario={uid}).")
-            st.experimental_rerun()
+            st.rerun()
 
+    # -------- Eliminar usuario --------
     st.write("---")
     st.write("### Eliminar usuario")
 
@@ -182,7 +187,7 @@ def _crud_usuarios():
             if confirmar:
                 execute("DELETE FROM Usuario WHERE Id_usuario = %s", (uid_sel,))
                 st.success("Usuario eliminado.")
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.warning("Debe marcar la casilla de confirmación.")
     else:
