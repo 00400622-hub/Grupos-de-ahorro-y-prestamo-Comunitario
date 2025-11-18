@@ -1,46 +1,7 @@
 # modulos/admin/panel.py
-import datetime as dt
 import streamlit as st
-
 from modulos.config.conexion import fetch_all, fetch_one, execute
 from modulos.auth.rbac import require_auth, has_role
-
-
-# ==========================
-# Sincronizar promotora con usuario
-# ==========================
-
-def _sync_promotora_from_usuario(uid: int):
-    """
-    Si el usuario tiene rol PROMOTORA, asegura que exista fila en 'promotora'.
-    """
-    usuario = fetch_one(
-        """
-        SELECT u.Id_usuario, u.Nombre, u.DUI, r.`Tipo de rol` AS RolNombre
-        FROM Usuario u
-        JOIN rol r ON r.Id_rol = u.Id_rol
-        WHERE u.Id_usuario = %s
-        """,
-        (uid,),
-    )
-    if not usuario:
-        return
-
-    rol = (usuario["RolNombre"] or "").upper().strip()
-    if rol != "PROMOTORA":
-        return
-
-    existe = fetch_one(
-        "SELECT Id_promotora FROM promotora WHERE DUI = %s LIMIT 1",
-        (usuario["DUI"],),
-    )
-    if existe:
-        return
-
-    execute(
-        "INSERT INTO promotora (Nombre, DUI) VALUES (%s, %s)",
-        (usuario["Nombre"], usuario["DUI"]),
-    )
 
 
 # ==========================
@@ -50,19 +11,12 @@ def _sync_promotora_from_usuario(uid: int):
 def _crud_distritos():
     st.subheader("Distritos")
 
-    # ----- Listado -----
-    try:
-        distritos = fetch_all(
-            """
-            SELECT Id_distrito, Nombre
-            FROM distritos
-            ORDER BY Id_distrito ASC
-            """
-        )
-    except Exception as e:
-        st.error("Error al consultar la tabla 'distritos'. Revisa nombres de tabla/columnas en phpMyAdmin.")
-        st.code(str(e))
-        return
+    # Listado de distritos
+    distritos = fetch_all("""
+        SELECT Id_distrito, Nombre
+        FROM distritos
+        ORDER BY Id_distrito ASC
+    """)
 
     st.write("### Lista de distritos")
     if distritos:
@@ -71,23 +25,21 @@ def _crud_distritos():
         st.info("No hay distritos registrados.")
 
     st.write("---")
-    # ----- Crear distrito -----
     st.write("### Crear nuevo distrito")
+    nuevo_nombre = st.text_input("Nombre del distrito")
 
-    nombre = st.text_input("Nombre del nuevo distrito")
     if st.button("Crear distrito"):
-        if not nombre.strip():
+        if not nuevo_nombre.strip():
             st.warning("Ingrese un nombre válido.")
         else:
             execute(
                 "INSERT INTO distritos (Nombre) VALUES (%s)",
-                (nombre.strip(),),
+                (nuevo_nombre.strip(),),
             )
             st.success("Distrito creado correctamente.")
             st.rerun()
 
     st.write("---")
-    # ----- Eliminar distrito -----
     st.write("### Eliminar distrito")
 
     if distritos:
@@ -95,11 +47,11 @@ def _crud_distritos():
             f'{d["Id_distrito"]} - {d["Nombre"]}': d["Id_distrito"]
             for d in distritos
         }
-        label_sel = st.selectbox(
+        etiqueta = st.selectbox(
             "Seleccione el distrito a eliminar",
-            list(opciones.keys()),
+            list(opciones.keys())
         )
-        id_sel = opciones[label_sel]
+        id_sel = opciones[etiqueta]
         confirmar = st.checkbox(
             "Confirmo que deseo eliminar este distrito (no se puede deshacer)."
         )
@@ -108,9 +60,9 @@ def _crud_distritos():
             if confirmar:
                 execute(
                     "DELETE FROM distritos WHERE Id_distrito = %s",
-                    (id_sel,),
+                    (id_sel,)
                 )
-                st.success("Distrito eliminado.")
+                st.success("Distrito eliminado correctamente.")
                 st.rerun()
             else:
                 st.warning("Debe marcar la casilla de confirmación.")
@@ -125,20 +77,17 @@ def _crud_distritos():
 def _crud_usuarios():
     st.subheader("Usuarios")
 
-    # ----- Listado -----
-    try:
-        usuarios = fetch_all(
-            """
-            SELECT u.Id_usuario, u.Nombre, u.DUI, r.`Tipo de rol` AS Rol, u.Id_rol
-            FROM Usuario u
-            JOIN rol r ON r.Id_rol = u.Id_rol
-            ORDER BY u.Id_usuario ASC
-            """
-        )
-    except Exception as e:
-        st.error("Error al consultar la tabla 'Usuario'.")
-        st.code(str(e))
-        return
+    # Listado de usuarios
+    usuarios = fetch_all("""
+        SELECT u.Id_usuario,
+               u.Nombre,
+               u.DUI,
+               r.`Tipo de rol` AS Rol,
+               u.Id_rol
+        FROM Usuario u
+        JOIN rol r ON r.Id_rol = u.Id_rol
+        ORDER BY u.Id_usuario ASC
+    """)
 
     st.write("### Lista de usuarios")
     if usuarios:
@@ -147,16 +96,19 @@ def _crud_usuarios():
         st.info("No hay usuarios registrados.")
 
     st.write("---")
-    # ----- Crear usuario -----
     st.write("### Crear usuario")
 
     nombre = st.text_input("Nombre completo")
-    dui = st.text_input("DUI", key="dui_crear_usuario")
+    dui = st.text_input("DUI")
     contr = st.text_input("Contraseña", type="password")
 
     # Cargar roles existentes
-    roles = fetch_all("SELECT Id_rol, `Tipo de rol` FROM rol ORDER BY Id_rol")
-    mapa_roles = {r["Tipo de rol"]: r["Id_rol"] for r in roles}
+    roles = fetch_all("""
+        SELECT Id_rol, `Tipo de rol` AS RolNombre
+        FROM rol
+        ORDER BY Id_rol
+    """)
+    mapa_roles = {r["RolNombre"]: r["Id_rol"] for r in roles}
     rol_nombre = st.selectbox("Rol", list(mapa_roles.keys())) if roles else None
 
     if st.button("Crear usuario"):
@@ -166,25 +118,33 @@ def _crud_usuarios():
             st.warning("Debe existir al menos un rol en la tabla 'rol'.")
         else:
             id_rol = mapa_roles[rol_nombre]
-            # Insertamos al usuario
-            execute(
-                "INSERT INTO Usuario (Nombre, DUI, Contraseña, Id_rol) "
-                "VALUES (%s, %s, %s, %s)",
-                (nombre.strip(), dui.strip(), contr.strip(), id_rol),
-            )
-            # Obtenemos el último Id_usuario insertado
-            fila = fetch_one("SELECT LAST_INSERT_ID() AS id")
-            uid = fila["id"] if fila and "id" in fila else None
 
-            # Si es promotora, sincronizar en tabla promotora
-            if uid is not None:
-                _sync_promotora_from_usuario(uid)
+            # Insertamos el usuario
+            uid = execute(
+                """
+                INSERT INTO Usuario (Nombre, DUI, Contraseña, Id_rol)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (nombre.strip(), dui.strip(), contr.strip(), id_rol),
+                return_last_id=True,
+            )
+
+            # Si el rol es PROMOTORA, nos aseguramos de que exista en la tabla 'promotora'
+            if rol_nombre.upper().strip() == "PROMOTORA":
+                existe_prom = fetch_one(
+                    "SELECT Id_promotora FROM promotora WHERE DUI = %s LIMIT 1",
+                    (dui.strip(),),
+                )
+                if not existe_prom:
+                    execute(
+                        "INSERT INTO promotora (Nombre, DUI) VALUES (%s, %s)",
+                        (nombre.strip(), dui.strip()),
+                    )
 
             st.success(f"Usuario creado correctamente (Id_usuario={uid}).")
             st.rerun()
 
     st.write("---")
-    # ----- Eliminar usuario -----
     st.write("### Eliminar usuario")
 
     if usuarios:
@@ -194,7 +154,7 @@ def _crud_usuarios():
         }
         label_sel = st.selectbox(
             "Seleccione el usuario a eliminar",
-            list(opciones.keys()),
+            list(opciones.keys())
         )
         uid_sel = opciones[label_sel]
         confirmar = st.checkbox(
@@ -216,8 +176,8 @@ def _crud_usuarios():
 # PANEL ADMINISTRADOR
 # ==========================
 
-@require_auth          # <-- SIN paréntesis
-@has_role("ADMINISTRADOR")
+@require_auth()
+@has_role("ADMINISTRADOR", "ADMINISTRADOR GENERAL")
 def admin_panel():
     st.title("Panel de Administración — SGI GAPC")
 
