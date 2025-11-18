@@ -3,7 +3,7 @@ from datetime import date
 from mysql.connector.errors import IntegrityError
 
 from modulos.config.conexion import fetch_all, fetch_one, execute
-
+from modulos.promotora.directiva import crear_directiva_panel
 
 # -------------------------------------------------
 # Helpers para obtener usuario y promotora actual
