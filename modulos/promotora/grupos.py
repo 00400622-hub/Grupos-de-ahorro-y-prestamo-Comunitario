@@ -272,7 +272,7 @@ def promotora_panel():
 
     st.title("Panel de Promotora")
 
-    pestañas = st.tabs(["Crear grupo", "Mis grupos", "Crear Directiva", "Reportes"])
+       pestañas = st.tabs(["Crear grupo", "Mis grupos", "Crear Directiva", "Reportes"])
 
     with pestañas[0]:
         _crear_grupo(promotora)
@@ -281,9 +281,7 @@ def promotora_panel():
         _mis_grupos(promotora)
 
     with pestañas[2]:
-        # Importación diferida para evitar problemas de import circular
         from modulos.promotora.directiva import crear_directiva_panel
-
         crear_directiva_panel(promotora)
 
     with pestañas[3]:
