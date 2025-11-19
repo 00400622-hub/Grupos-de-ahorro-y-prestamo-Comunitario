@@ -272,16 +272,23 @@ def _mis_grupos(promotora: dict):
 # ──────────────────────────────────────────────
 # Panel principal de promotora
 # ──────────────────────────────────────────────
-# 🔴 AQUÍ está el cambio importante: el decorador SIN argumentos
 
-@require_auth
-def promotora_panel(promotora: dict):
+@require_auth  # (sin argumentos; el decorador no recibe parámetros aquí)
+def promotora_panel():
     """
     Panel de la promotora.
-    'promotora' viene del login y contiene al menos:
-    - promotora["Nombre"]
-    - promotora["DUI"]
+
+    El usuario autenticado se toma de st.session_state["usuario"].
+    De ahí armamos un pequeño dict 'promotora' que reutilizan las
+    funciones _crear_grupo, _mis_grupos y crear_directiva_panel.
     """
+    usuario = st.session_state.get("usuario") or {}
+
+    promotora = {
+        "DUI": usuario.get("DUI", ""),
+        "Nombre": usuario.get("Nombre", ""),
+    }
+
     st.title("Panel de Promotora")
 
     tabs = st.tabs(["Crear grupo", "Mis grupos", "Crear Directiva", "Reportes"])
