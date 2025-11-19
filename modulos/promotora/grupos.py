@@ -1,306 +1,294 @@
 # modulos/promotora/grupos.py
-
 import streamlit as st
-import pandas as pd
 from datetime import date
 
-from modulos.auth.rbac import require_auth
-from modulos.config.conexion import fetch_all, execute
-from modulos.promotora.directiva import crear_directiva_panel
+from modulos.config.conexion import fetch_all, fetch_one, execute
+from modulos.auth.rbac import require_auth, has_role, get_user
 
 
-# ──────────────────────────────────────────────
+# -------------------------------------------------------
 # Helpers
-# ──────────────────────────────────────────────
-
-def _normalizar_dui(txt: str) -> str:
-    """Quita todo lo que no sea número del DUI."""
-    return "".join(ch for ch in (txt or "") if ch.isdigit())
-
-
-def _obtener_promotora_por_dui(dui: str):
-    """Devuelve la fila de la tabla promotora para un DUI dado."""
-    sql = "SELECT Id_promotora, Nombre, DUI FROM promotora WHERE DUI = %s"
-    filas = fetch_all(sql, (dui,))
-    return filas[0] if filas else None
+# -------------------------------------------------------
+def _normalizar_dui(dui: str) -> str:
+"""Deja solo dígitos en el DUI."""
+return "".join(ch for ch in (dui or "") if ch.isdigit())
 
 
-def _cargar_distritos():
-    sql = "SELECT Id_distrito, Nombre FROM distritos ORDER BY Nombre"
-    return fetch_all(sql)
+def _parsear_duis(cadena: str) -> list[str]:
+"""
+Convierte '004006223, 004006220' -> ['004006223', '004006220']
+quitando espacios, vacíos y duplicados.
+"""
+if not cadena:
+return []
+vistos = set()
+resultado = []
+for parte in cadena.split(","):
+d = _normalizar_dui(parte)
+if len(d) == 9 and d not in vistos:
+vistos.add(d)
+resultado.append(d)
+return resultado
 
 
-# ──────────────────────────────────────────────
-# Crear grupo
-# ──────────────────────────────────────────────
+def _serializar_duis(lista: list[str]) -> str:
+"""Convierte lista a cadena CSV normalizada."""
+return ",".join(lista)
 
+
+def _obtener_promotora_actual() -> dict | None:
+"""
+Obtiene la fila de 'promotora' correspondiente al usuario en sesión (por su DUI).
+"""
+user = get_user()
+if not user:
+return None
+
+return fetch_one(
+"""
+SELECT Id_promotora, Nombre, DUI
+FROM promotora
+WHERE DUI = %s
+LIMIT 1
+""",
+(user["DUI"],),
+)
+
+
+# -------------------------------------------------------
+# Sección: Crear grupo
+# -------------------------------------------------------
 def _crear_grupo(promotora: dict):
-    st.subheader("Crear grupo")
+st.subheader("Crear grupo")
 
-    dui_usuario = promotora["DUI"]
-    prom = _obtener_promotora_por_dui(dui_usuario)
+st.write(
+f"**Promotora principal:** {promotora['Nombre']} — **DUI:** {promotora['DUI']}"
+)
 
-    if not prom:
-        st.error(
-            "No se encontró una promotora asociada a este usuario. "
-            "Verifica que el DUI del usuario exista en la tabla 'promotora'."
-        )
-        return
+nombre = st.text_input("Nombre del grupo")
 
-    st.caption(f"Promotora principal: {prom['Nombre']} — DUI: {prom['DUI']}")
+# Distritos
+distritos = fetch_all(
+"SELECT Id_distrito, Nombre FROM distritos ORDER BY Nombre ASC"
+)
+opciones = {d["Nombre"]: d["Id_distrito"] for d in distritos}
+nombre_distrito = (
+st.selectbox("Distrito", list(opciones.keys())) if opciones else None
+)
+id_distrito = opciones.get(nombre_distrito) if nombre_distrito else None
 
-    nombre_grupo = st.text_input(
-        "Nombre del grupo",
-        key="crear_grupo_nombre",
-    )
+# DUIs de promotoras asignadas al grupo (por defecto, la promotora actual)
+duis_por_defecto = promotora["DUI"]
+duis_input = st.text_input(
+"Promotoras asignadas al grupo (DUIs separados por coma)",
+value=duis_por_defecto,
+help=(
+"Por defecto se usa tu propio DUI. "
+"Si quieres que otra promotora también vea y gestione este grupo, "
+"escribe sus DUIs separados por coma."
+),
+)
 
-    distritos = _cargar_distritos()
-    if distritos:
-        opciones_dist = {d["Nombre"]: d["Id_distrito"] for d in distritos}
-        nombre_dist_sel = st.selectbox(
-            "Distrito",
-            list(opciones_dist.keys()),
-            key="crear_grupo_distrito",
-        )
-        id_distrito_sel = opciones_dist[nombre_dist_sel]
-    else:
-        st.warning("No hay distritos registrados en la tabla 'distritos'.")
-        return
+if st.button("Guardar grupo", type="primary"):
+if not nombre.strip():
+st.warning("Debes ingresar el nombre del grupo.")
+return
+if not id_distrito:
+st.warning("Debes seleccionar un distrito.")
+return
 
-    if st.button("Guardar grupo", type="primary", key="btn_guardar_grupo"):
-        if not nombre_grupo.strip():
-            st.error("Debes ingresar un nombre para el grupo.")
-            return
+duis_lista = _parsear_duis(duis_input)
+# Aseguramos que al menos esté el DUI de la promotora que crea el grupo
+if promotora["DUI"] not in duis_lista:
+duis_lista.insert(0, promotora["DUI"])
 
-        hoy = date.today()
-        dui_principal = _normalizar_dui(dui_usuario)
+duis_final = _serializar_duis(duis_lista)
 
-        try:
-            sql = """
-                INSERT INTO grupos
-                    (Nombre, Id_distrito, Estado, Creado_por, Creado_en, DUIs_promotoras, Id_promotora)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """
-            execute(
-                sql,
-                (
-                    nombre_grupo.strip(),
-                    id_distrito_sel,
-                    "ACTIVO",
-                    prom["Id_promotora"],
-                    hoy,
-                    dui_principal,
-                    prom["Id_promotora"],
-                ),
-            )
-            st.success("Grupo creado correctamente.")
-            st.experimental_rerun()
-        except Exception as e:
-            st.error(f"Error al crear el grupo: {e}")
+execute(
+"""
+INSERT INTO grupos
+(Nombre, Id_distrito, Estado, Creado_en, DUIs_promotoras, Id_promotora)
+VALUES (%s, %s, %s, %s, %s, %s)
+""",
+(
+nombre.strip(),
+id_distrito,
+"ACTIVO",
+date.today(),
+duis_final,
+promotora["Id_promotora"],
+),
+)
+st.success("Grupo creado correctamente.")
+st.rerun()
 
 
-# ──────────────────────────────────────────────
-# Mis grupos: listado, eliminar y gestionar promotoras
-# ──────────────────────────────────────────────
-
+# -------------------------------------------------------
+# Sección: Mis grupos (listar / eliminar / gestionar promotoras)
+# -------------------------------------------------------
 def _mis_grupos(promotora: dict):
-    st.subheader("Mis grupos")
+st.subheader("Mis grupos")
 
-    dui_prom = _normalizar_dui(promotora["DUI"])
+dui_actual = promotora["DUI"]
 
-    sql = """
-        SELECT g.Id_grupo,
-               g.Nombre,
-               d.Nombre AS Distrito,
-               g.Estado,
-               g.Creado_en,
-               g.DUIs_promotoras
-        FROM grupos g
-        JOIN distritos d ON d.Id_distrito = g.Id_distrito
-        WHERE FIND_IN_SET(%s, g.DUIs_promotoras)
-        ORDER BY g.Id_grupo
-    """
-    filas = fetch_all(sql, (dui_prom,))
+# Solo grupos donde el DUI de la promotora aparezca en DUIs_promotoras
+grupos = fetch_all(
+"""
+SELECT g.Id_grupo,
+g.Nombre,
+d.Nombre AS Distrito,
+g.Estado,
+g.Creado_en,
+g.DUIs_promotoras
+FROM grupos g
+JOIN distritos d ON d.Id_distrito = g.Id_distrito
+WHERE FIND_IN_SET(%s, REPLACE(g.DUIs_promotoras, ' ', '')) > 0
+ORDER BY g.Id_grupo ASC
+""",
+(dui_actual,),
+)
 
-    if not filas:
-        st.info("Aún no hay grupos donde tu DUI aparezca como promotora responsable.")
-        return
+if not grupos:
+st.info("No tienes grupos asignados todavía.")
+return
 
-    df = pd.DataFrame(filas)
-    df = df.rename(
-        columns={
-            "Id_grupo": "Id_grupo",
-            "Nombre": "Nombre",
-            "Distrito": "Distrito",
-            "Estado": "Estado",
-            "Creado_en": "Creado_en",
-            "DUIs_promotoras": "DUIs_promotoras",
-        }
-    )
+st.write(
+"Listado de grupos donde tu DUI aparece como promotora responsable."
+)
+st.table(grupos)
 
-    st.markdown(
-        "Listado de grupos donde tu DUI aparece como promotora responsable."
-    )
-    st.dataframe(df, use_container_width=True)
+# ---------------------------------------
+# Eliminar grupo
+# ---------------------------------------
+st.markdown("---")
+st.markdown("### Eliminar grupo")
 
-    # ─ Eliminar grupo
-    st.markdown("---")
-    st.markdown("### Eliminar grupo")
+opciones_grupo = {
+f"{g['Id_grupo']} - {g['Nombre']} ({g['Distrito']})": g for g in grupos
+}
+etiqueta_grupo_eliminar = st.selectbox(
+"Selecciona el grupo a eliminar",
+list(opciones_grupo.keys()),
+key="grupo_eliminar",
+)
+grupo_sel_eliminar = opciones_grupo.get(etiqueta_grupo_eliminar)
 
-    opciones_grupos = {
-        f"{row['Id_grupo']} - {row['Nombre']} ({row['Distrito']})": row["Id_grupo"]
-        for row in filas
-    }
+confirmar = st.checkbox(
+"Confirmo que deseo eliminar este grupo (esta acción no se puede deshacer).",
+key="chk_eliminar_grupo",
+)
 
-    etiqueta_elim = st.selectbox(
-        "Selecciona el grupo a eliminar",
-        list(opciones_grupos.keys()),
-        key="sel_grupo_eliminar",
-    )
-    id_grupo_elim = opciones_grupos[etiqueta_elim]
+if st.button("Eliminar grupo", type="secondary"):
+if not grupo_sel_eliminar:
+st.warning("Debes elegir un grupo.")
+elif not confirmar:
+st.warning("Debes marcar la casilla de confirmación.")
+else:
+execute(
+"DELETE FROM grupos WHERE Id_grupo = %s",
+(grupo_sel_eliminar["Id_grupo"],),
+)
+st.success("Grupo eliminado correctamente.")
+st.rerun()
 
-    confirmar = st.checkbox(
-        "Confirmo que deseo eliminar este grupo (esta acción no se puede deshacer).",
-        key="chk_confirmar_eliminar_grupo",
-    )
+# ---------------------------------------
+# Gestionar promotoras asignadas a un grupo
+# ---------------------------------------
+st.markdown("---")
+st.markdown("### Gestionar promotoras asignadas a un grupo")
 
-    if st.button(
-        "Eliminar grupo",
-        type="secondary",
-        key="btn_eliminar_grupo",
-        disabled=not confirmar,
-    ):
-        try:
-            execute("DELETE FROM directiva WHERE Id_grupo = %s", (id_grupo_elim,))
-            execute("DELETE FROM grupos WHERE Id_grupo = %s", (id_grupo_elim,))
-            st.success("Grupo eliminado correctamente.")
-            st.experimental_rerun()
-        except Exception as e:
-            st.error(f"Error al eliminar el grupo: {e}")
+etiqueta_grupo_gestion = st.selectbox(
+"Selecciona el grupo a gestionar",
+list(opciones_grupo.keys()),
+key="grupo_gestion",
+)
+grupo_sel_gestion = opciones_grupo.get(etiqueta_grupo_gestion)
 
-    # ─ Gestionar promotoras
-    st.markdown("---")
-    st.markdown("### Gestionar promotoras asignadas a un grupo")
+if not grupo_sel_gestion:
+return
 
-    etiqueta_gestion = st.selectbox(
-        "Selecciona el grupo a gestionar",
-        list(opciones_grupos.keys()),
-        key="sel_grupo_gestion",
-    )
-    id_grupo_gestion = opciones_grupos[etiqueta_gestion]
+duis_actuales = _parsear_duis(grupo_sel_gestion.get("DUIs_promotoras", ""))
+st.write(
+"DUIs asignados actualmente: ",
+", ".join(duis_actuales) if duis_actuales else "Ninguno",
+)
 
-    fila_sel = next(row for row in filas if row["Id_grupo"] == id_grupo_gestion)
-    cadena_duis = fila_sel.get("DUIs_promotoras") or ""
-    duis_actuales = [d.strip() for d in cadena_duis.split(",") if d.strip()]
+# ---- Agregar promotora ----
+nuevo_dui = st.text_input(
+"Agregar DUI de promotora",
+key="nuevo_dui",
+help="Escribe el DUI de la promotora que quieres agregar al grupo.",
+)
+if st.button("Agregar promotora al grupo", key="btn_agregar_promotora"):
+dui_limpio = _normalizar_dui(nuevo_dui)
+if not dui_limpio:
+st.warning("Debes escribir un DUI.")
+elif len(dui_limpio) != 9:
+st.warning("El DUI debe tener 9 dígitos.")
+elif dui_limpio in duis_actuales:
+st.info("Ese DUI ya está asignado al grupo.")
+else:
+duis_actuales.append(dui_limpio)
+duis_actuales_unicos = _parsear_duis(_serializar_duis(duis_actuales))
+execute(
+"UPDATE grupos SET DUIs_promotoras = %s WHERE Id_grupo = %s",
+(_serializar_duis(duis_actuales_unicos), grupo_sel_gestion["Id_grupo"]),
+)
+st.success("Promotora agregada al grupo.")
+st.rerun()
 
-    if duis_actuales:
-        st.write("DUIs asignados actualmente:", ", ".join(duis_actuales))
-    else:
-        st.write("Este grupo no tiene DUIs de promotoras asignados aún.")
-
-    # Quitar promotoras
-    st.markdown("#### Quitar promotoras del grupo")
-
-    if duis_actuales:
-        duis_quitar = st.multiselect(
-            "Selecciona los DUIs que deseas quitar del grupo",
-            duis_actuales,
-            key="multisel_duis_quitar",
-        )
-
-        if st.button(
-            "Quitar DUIs seleccionados",
-            key="btn_quitar_duis",
-            disabled=not duis_quitar,
-        ):
-            nuevos = [d for d in duis_actuales if d not in duis_quitar]
-
-            if not nuevos:
-                st.error(
-                    "El grupo debe tener al menos una promotora asignada. "
-                    "No puedes quitar todos los DUIs."
-                )
-            else:
-                try:
-                    nueva_cadena = ",".join(nuevos)
-                    execute(
-                        "UPDATE grupos SET DUIs_promotoras = %s WHERE Id_grupo = %s",
-                        (nueva_cadena, id_grupo_gestion),
-                    )
-                    st.success("DUIs actualizados correctamente.")
-                    st.experimental_rerun()
-                except Exception as e:
-                    st.error(f"Error al actualizar DUIs de promotoras: {e}")
-    else:
-        st.info("No hay DUIs para quitar en este grupo.")
-
-    # Agregar promotora
-    st.markdown("#### Agregar promotora al grupo")
-
-    dui_nuevo = st.text_input(
-        "DUI de la promotora que deseas agregar (con o sin guiones)",
-        key="txt_dui_agregar_promotora",
-    )
-
-    if st.button("Agregar promotora al grupo", key="btn_agregar_promotora"):
-        dui_nuevo_norm = _normalizar_dui(dui_nuevo)
-
-        if not dui_nuevo_norm:
-            st.error("Debes ingresar un DUI válido.")
-        elif dui_nuevo_norm in duis_actuales:
-            st.warning("Ese DUI ya está asignado al grupo.")
-        else:
-            prom_add = _obtener_promotora_por_dui(dui_nuevo_norm)
-            if not prom_add:
-                st.error(
-                    "No se encontró una promotora con ese DUI en la tabla 'promotora'."
-                )
-            else:
-                try:
-                    nuevos = duis_actuales + [dui_nuevo_norm]
-                    nueva_cadena = ",".join(nuevos)
-                    execute(
-                        "UPDATE grupos SET DUIs_promotoras = %s WHERE Id_grupo = %s",
-                        (nueva_cadena, id_grupo_gestion),
-                    )
-                    st.success("Promotora agregada correctamente al grupo.")
-                    st.experimental_rerun()
-                except Exception as e:
-                    st.error(f"Error al agregar promotora al grupo: {e}")
+# ---- Quitar promotoras ----
+st.write("")
+duis_a_quitar = st.multiselect(
+"Selecciona los DUIs que deseas quitar del grupo",
+duis_actuales,
+key="duis_quitar",
+)
+if st.button("Quitar DUIs seleccionados", key="btn_quitar_promotora"):
+if not duis_a_quitar:
+st.warning("No has seleccionado ningún DUI para quitar.")
+else:
+duis_restantes = [d for d in duis_actuales if d not in duis_a_quitar]
+if not duis_restantes:
+st.warning(
+"El grupo debe tener al menos una promotora responsable."
+)
+else:
+execute(
+"UPDATE grupos SET DUIs_promotoras = %s WHERE Id_grupo = %s",
+(_serializar_duis(duis_restantes), grupo_sel_gestion["Id_grupo"]),
+)
+st.success("Se actualizaron las promotoras asignadas al grupo.")
+st.rerun()
 
 
-# ──────────────────────────────────────────────
-# Panel principal de promotora
-# ──────────────────────────────────────────────
-
-@require_auth  # (sin argumentos; el decorador no recibe parámetros aquí)
+# -------------------------------------------------------
+# Panel principal de Promotora
+# -------------------------------------------------------
+@require_auth
+@has_role("PROMOTORA")
 def promotora_panel():
-    """
-    Panel de la promotora.
+promotora = _obtener_promotora_actual()
+if not promotora:
+st.error(
+"No se encontró una promotora asociada a este usuario. "
+"Verifica que el DUI del usuario exista en la tabla 'promotora'."
+)
+return
 
-    El usuario autenticado se toma de st.session_state["usuario"].
-    De ahí armamos un pequeño dict 'promotora' que reutilizan las
-    funciones _crear_grupo, _mis_grupos y crear_directiva_panel.
-    """
-    usuario = st.session_state.get("usuario") or {}
+st.title("Panel de Promotora")
 
-    promotora = {
-        "DUI": usuario.get("DUI", ""),
-        "Nombre": usuario.get("Nombre", ""),
-    }
+pestañas = st.tabs(["Crear grupo", "Mis grupos", "Crear Directiva", "Reportes"])
 
-    st.title("Panel de Promotora")
+with pestañas[0]:
+_crear_grupo(promotora)
 
-    tabs = st.tabs(["Crear grupo", "Mis grupos", "Crear Directiva", "Reportes"])
+with pestañas[1]:
+_mis_grupos(promotora)
 
-    with tabs[0]:
-        _crear_grupo(promotora)
+# Las otras pestañas se pueden implementar después
+with pestañas[2]:
+st.info("Aquí se implementará la creación de directiva del grupo.")
 
-    with tabs[1]:
-        _mis_grupos(promotora)
-
-    with tabs[2]:
-        crear_directiva_panel(promotora)
-
-    with tabs[3]:
-        st.info("Módulo de reportes en construcción.")
+with pestañas[3]:
+st.info("Aquí se implementarán los reportes para la promotora.")
