@@ -2,6 +2,7 @@
 from datetime import date
 
 import streamlit as st
+import pandas as pd  # <-- NUEVO
 
 from modulos.config.conexion import fetch_all, fetch_one, execute
 from modulos.auth.rbac import get_user
@@ -46,9 +47,6 @@ def crear_directiva_panel():
 
     - Crear NUEVAS cuentas de directiva para un grupo (puede haber varias).
     - Eliminar directivas de un grupo.
-
-    OJO: esta función NO lleva decoradores, porque el acceso ya está
-    restringido desde promotora_panel().
     """
     user = get_user()
     if not user:
@@ -72,6 +70,42 @@ def crear_directiva_panel():
         f"{g['Id_grupo']} - {g['Nombre']}": g["Id_grupo"] for g in grupos
     }
 
+    # =========================================================
+    #  TABLA "MIS DIRECTIVAS" (similar a la de Mis grupos)
+    # =========================================================
+    directivas_todas = fetch_all(
+        """
+        SELECT
+            d.Id_directiva,
+            g.Id_grupo,
+            g.Nombre       AS Grupo,
+            d.Nombre       AS Directiva,
+            d.DUI,
+            d.Creado_en
+        FROM directiva d
+        INNER JOIN grupos g ON g.Id_grupo = d.Id_grupo
+        WHERE FIND_IN_SET(%s, g.DUIs_promotoras) > 0
+        ORDER BY g.Id_grupo, d.Nombre
+        """,
+        (dui_prom,),
+    )
+
+    st.markdown("### Mis directivas")
+    if not directivas_todas:
+        st.info("Aún no hay directivas registradas en tus grupos.")
+    else:
+        df_dir = pd.DataFrame(directivas_todas)
+        # Orden de columnas parecido al de tu tabla de grupos
+        df_dir = df_dir[
+            ["Id_directiva", "Id_grupo", "Grupo", "Directiva", "DUI", "Creado_en"]
+        ]
+        st.dataframe(df_dir, use_container_width=True)
+
+    st.markdown("---")
+
+    # ------------------------------------------------------------------
+    # PESTAÑAS: CREAR Y ELIMINAR DIRECTIVAS
+    # ------------------------------------------------------------------
     tab_crear, tab_eliminar = st.tabs(
         ["➕ Agregar directiva a grupo", "🗑 Eliminar directivas"]
     )
