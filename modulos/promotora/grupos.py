@@ -4,7 +4,7 @@ import datetime as dt
 import streamlit as st
 
 from modulos.config.conexion import fetch_all, fetch_one, execute
-from modulos.auth.rbac import has_role
+from modulos.auth.rbac import has_role, get_user
 
 
 def _obtener_grupos_de_promotora(dui_promotora: str):
@@ -35,6 +35,7 @@ def _crear_grupo(promotora: dict):
     )
 
     nombre_grupo = st.text_input("Nombre del grupo")
+
     # Cargar distritos
     distritos = fetch_all(
         "SELECT Id_distrito, Nombre FROM distritos ORDER BY Nombre ASC"
@@ -122,7 +123,6 @@ def _seccion_eliminar_grupo(promotora: dict, grupos: list):
             st.warning("Debes marcar la casilla de confirmación.")
             return
 
-        # Eliminar grupo (podrías agregar aquí borrado en cascada si hace falta)
         execute("DELETE FROM grupos WHERE Id_grupo = %s", (id_grupo_sel,))
         st.success(f"Grupo {etiqueta_sel} eliminado correctamente.")
         st.experimental_rerun()
@@ -173,6 +173,7 @@ def _seccion_gestion_promotoras(grupos: list):
     duis_a_agregar = st.multiselect(
         "Selecciona las promotoras que deseas AGREGAR al grupo",
         list(opciones_add.keys()),
+        key="duis_agregar",
     )
 
     if st.button("Agregar promotoras al grupo"):
@@ -212,9 +213,17 @@ def _seccion_gestion_promotoras(grupos: list):
 
 
 @has_role("PROMOTORA")
-def promotora_panel(promotora: dict):
-    st.title("Panel de Promotora")
+def promotora_panel():
+    """
+    Panel principal de la promotora.
+    No recibe parámetros: toma el usuario actual desde la sesión (get_user()).
+    """
+    promotora = get_user()
+    if not promotora:
+        st.error("No hay una sesión activa de promotora.")
+        st.stop()
 
+    st.title("Panel de Promotora")
     st.caption(
         f"Usuario: {promotora['Nombre']} — DUI: {promotora['DUI']}"
     )
