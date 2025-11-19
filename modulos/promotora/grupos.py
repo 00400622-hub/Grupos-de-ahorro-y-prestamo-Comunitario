@@ -61,6 +61,24 @@ def _crear_grupo(promotora: Dict):
     nombre_dist = st.selectbox("Distrito", list(opciones.keys()))
     id_distrito = opciones[nombre_dist]
 
+    # ------------------------------
+    # Mostrar usuario y DUI con el que se está creando el grupo
+    # (solo lectura, para que se vea claramente quién queda como principal)
+    # ------------------------------
+    col1, col2 = st.columns(2)
+    with col1:
+        st.text_input(
+            "Usuario con el que se crea el grupo",
+            value=promotora["Nombre"],
+            disabled=True,
+        )
+    with col2:
+        st.text_input(
+            "DUI de la promotora principal",
+            value=promotora["DUI"],
+            disabled=True,
+        )
+
     if st.button("Guardar grupo", type="primary"):
         if not nombre.strip():
             st.warning("Debes escribir un nombre para el grupo.")
@@ -95,7 +113,7 @@ def _crear_grupo(promotora: Dict):
 
 
 # ============================================================
-#   Mis grupos (listar, eliminar grupo, quitar promotoras)
+#   Mis grupos (listar, eliminar grupo, quitar/agregar promotoras)
 # ============================================================
 
 def _mis_grupos(promotora: Dict):
@@ -131,16 +149,18 @@ def _mis_grupos(promotora: Dict):
     )
     st.dataframe(df, use_container_width=True)
 
+    # Diccionario común de opciones (Id_grupo)
+    opciones = {
+        f"{g['Id_grupo']} - {g['Nombre']} ({g['Distrito']})": g["Id_grupo"]
+        for g in grupos
+    }
+
     # --------------------------------------------------------
     # 1) Eliminar grupo
     # --------------------------------------------------------
     st.write("---")
     st.subheader("Eliminar grupo")
 
-    opciones = {
-        f"{g['Id_grupo']} - {g['Nombre']} ({g['Distrito']})": g["Id_grupo"]
-        for g in grupos
-    }
     etiqueta_sel = st.selectbox(
         "Selecciona el grupo a eliminar",
         list(opciones.keys()),
@@ -162,25 +182,73 @@ def _mis_grupos(promotora: Dict):
             st.experimental_rerun()
 
     # --------------------------------------------------------
-    # 2) Quitar promotoras asignadas a un grupo
+    # 2) Agregar promotoras (DUIs) a un grupo
     # --------------------------------------------------------
     st.write("---")
-    st.subheader("Gestionar promotoras asignadas a un grupo")
+    st.subheader("Agregar promotoras a un grupo")
+
+    etiqueta_agregar = st.selectbox(
+        "Selecciona el grupo al que deseas agregar promotoras",
+        list(opciones.keys()),
+        key="grupo_agregar",
+    )
+    id_grupo_agregar = opciones[etiqueta_agregar]
+
+    grp_agregar = fetch_one(
+        "SELECT DUIs_promotoras FROM grupos WHERE Id_grupo = %s",
+        (id_grupo_agregar,),
+    )
+    duis_str_agregar = (grp_agregar["DUIs_promotoras"] or "").strip()
+    lista_duis_actual = [d.strip() for d in duis_str_agregar.split(",") if d.strip()]
+
+    st.write(
+        f"DUIs asignados actualmente a este grupo: "
+        f"`{', '.join(lista_duis_actual) if lista_duis_actual else '(ninguno)'}`"
+    )
+
+    nuevos_duis_input = st.text_input(
+        "DUI(s) de promotoras a agregar (separados por coma)",
+        key="input_duis_agregar",
+        placeholder="Ejemplo: 004006223,004006224",
+    )
+
+    if st.button("Agregar promotoras"):
+        nuevos_duis = [
+            d.strip() for d in nuevos_duis_input.split(",") if d.strip()
+        ]
+        if not nuevos_duis:
+            st.warning("No escribiste ningún DUI para agregar.")
+        else:
+            # Evitar duplicados
+            conjunto = set(lista_duis_actual)
+            for d in nuevos_duis:
+                conjunto.add(d)
+
+            nueva_lista = sorted(conjunto)  # opcional: ordenados
+            nuevo_valor = ",".join(nueva_lista)
+
+            execute(
+                "UPDATE grupos SET DUIs_promotoras = %s WHERE Id_grupo = %s",
+                (nuevo_valor, id_grupo_agregar),
+            )
+            st.success("Promotoras agregadas correctamente al grupo.")
+            st.experimental_rerun()
+
+    # --------------------------------------------------------
+    # 3) Quitar promotoras asignadas a un grupo
+    # --------------------------------------------------------
+    st.write("---")
+    st.subheader("Quitar promotoras de un grupo")
 
     etiqueta_gestion = st.selectbox(
-        "Selecciona el grupo a gestionar",
+        "Selecciona el grupo del que deseas quitar promotoras",
         list(opciones.keys()),
         key="grupo_gestionar",
     )
     id_grupo_gestion = opciones[etiqueta_gestion]
 
-    # Obtenemos los DUIs actuales del grupo
     grp = fetch_one(
-        """
-        SELECT DUIs_promotoras
-        FROM grupos
-        WHERE Id_grupo = %s
-        """,
+        "SELECT DUIs_promotoras FROM grupos WHERE Id_grupo = %s",
         (id_grupo_gestion,),
     )
 
@@ -205,7 +273,6 @@ def _mis_grupos(promotora: Dict):
             st.warning("No has seleccionado ningún DUI para quitar.")
         else:
             nueva_lista = [d for d in lista_duis if d not in duis_a_quitar]
-
             nuevo_valor = ",".join(nueva_lista) if nueva_lista else ""
 
             execute(
