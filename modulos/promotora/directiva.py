@@ -7,6 +7,14 @@ from modulos.config.conexion import fetch_all, fetch_one, execute
 from modulos.auth.rbac import get_user
 
 
+def _do_rerun():
+    """Rerun compatible para distintas versiones de Streamlit."""
+    if hasattr(st, "rerun"):
+        st.rerun()
+    elif hasattr(st, "experimental_rerun"):
+        st.experimental_rerun()
+
+
 def _cargar_grupos_promotora(dui_promotora: str):
     """
     Devuelve los grupos donde el DUI de la promotora aparece en DUIs_promotoras.
@@ -169,7 +177,7 @@ def crear_directiva_panel():
                         st.success(
                             "Directiva creada y asociada al grupo correctamente."
                         )
-                        st.experimental_rerun()
+                        _do_rerun()
 
     # ------------------------------------------------------------------
     # TAB 2: ELIMINAR DIRECTIVAS
@@ -225,4 +233,4 @@ def crear_directiva_panel():
                     tuple(ids_seleccionados),
                 )
                 st.success("Directivas eliminadas correctamente.")
-                st.experimental_rerun()
+                _do_rerun()
