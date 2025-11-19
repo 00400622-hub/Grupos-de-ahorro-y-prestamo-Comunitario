@@ -1,236 +1,166 @@
 # modulos/promotora/directiva.py
-from datetime import date
 
+import datetime as dt
 import streamlit as st
 
 from modulos.config.conexion import fetch_all, fetch_one, execute
-from modulos.auth.rbac import get_user
+from modulos.auth.rbac import has_role
 
 
-def _do_rerun():
-    """Rerun compatible para distintas versiones de Streamlit."""
-    if hasattr(st, "rerun"):
-        st.rerun()
-    elif hasattr(st, "experimental_rerun"):
-        st.experimental_rerun()
-
-
-def _cargar_grupos_promotora(dui_promotora: str):
+def _obtener_grupos_de_promotora(dui_promotora: str):
     """
-    Devuelve los grupos donde el DUI de la promotora aparece en DUIs_promotoras.
+    Devuelve los grupos donde el DUI indicado aparece en la columna DUIs_promotoras.
+    Se usa para que la promotora solo pueda asignar directivas a SUS grupos.
     """
-    return fetch_all(
-        """
-        SELECT g.Id_grupo, g.Nombre
+    sql = """
+        SELECT 
+            g.Id_grupo,
+            g.Nombre,
+            d.Nombre AS Distrito,
+            g.Estado,
+            g.Creado_en,
+            g.DUIs_promotoras
         FROM grupos g
-        WHERE FIND_IN_SET(%s, g.DUIs_promotoras) > 0
-        ORDER BY g.Nombre
-        """,
-        (dui_promotora,),
+        LEFT JOIN distritos d ON d.Id_distrito = g.Id_distrito
+        WHERE FIND_IN_SET(%s, g.DUIs_promotoras)
+        ORDER BY g.Id_grupo
+    """
+    return fetch_all(sql, (dui_promotora,))
+
+
+def _listar_directivas_de_promotora(dui_promotora: str):
+    """
+    Lista las directivas cuya Id_grupo pertenece a grupos donde aparece el DUI de la promotora.
+    """
+    sql = """
+        SELECT 
+            dir.Id_directiva,
+            dir.Nombre,
+            dir.DUI,
+            g.Id_grupo,
+            g.Nombre AS Grupo,
+            g.DUIs_promotoras,
+            dir.Creado_en
+        FROM directiva dir
+        JOIN grupos g ON g.Id_grupo = dir.Id_grupo
+        WHERE FIND_IN_SET(%s, g.DUIs_promotoras)
+        ORDER BY dir.Id_directiva
+    """
+    return fetch_all(sql, (dui_promotora,))
+
+
+@has_role("PROMOTORA")
+def crear_directiva_panel(promotora: dict):
+    """
+    Pestaña 'Crear Directiva' dentro del panel de promotora.
+
+    - La promotora crea usuarios con rol DIRECTIVA.
+    - Se inserta tanto en la tabla Usuario como en la tabla directiva.
+    - Solo puede asignar directivas a grupos donde su DUI esté en DUIs_promotoras.
+    """
+
+    st.subheader("Crear directiva de grupo")
+
+    st.caption(
+        f"Promotora: {promotora['Nombre']} — DUI: {promotora['DUI']}"
     )
 
-
-def _id_rol_directiva() -> int | None:
-    """
-    Devuelve el Id_rol asociado al rol DIRECTIVA.
-    """
-    row = fetch_one(
-        "SELECT Id_rol FROM rol WHERE `Tipo de rol` = 'DIRECTIVA' LIMIT 1"
-    )
-    return row["Id_rol"] if row else None
-
-
-def crear_directiva_panel():
-    """
-    Panel dentro del modo PROMOTORA para:
-
-    - Crear NUEVAS cuentas de directiva para un grupo (puede haber varias).
-    - Eliminar directivas de un grupo.
-
-    OJO: esta función NO lleva decoradores, porque el acceso ya está
-    restringido desde promotora_panel().
-    """
-    user = get_user()
-    if not user:
-        st.error("No hay una sesión activa.")
-        return
-
-    dui_prom = (user.get("DUI") or "").strip()
-
-    st.subheader("Creación y gestión de directivas de grupo")
-    st.caption(f"Promotora actual: **{user['Nombre']}** — DUI: **{dui_prom}**")
-
-    # ==============================
-    #   Cargar grupos de la promotora
-    # ==============================
-    grupos = _cargar_grupos_promotora(dui_prom)
+    # ==========================
+    # Grupos de la promotora
+    # ==========================
+    grupos = _obtener_grupos_de_promotora(promotora["DUI"])
     if not grupos:
-        st.info("Todavía no tienes grupos asignados.")
+        st.info(
+            "No tienes grupos asignados todavía. "
+            "Primero crea grupos o pide al administrador que te asigne a alguno."
+        )
         return
 
-    opciones_grupos = {
-        f"{g['Id_grupo']} - {g['Nombre']}": g["Id_grupo"] for g in grupos
+    mapa_grupos = {
+        f"{g['Id_grupo']} - {g['Nombre']} ({g['Distrito']})": g["Id_grupo"]
+        for g in grupos
     }
 
-    tab_crear, tab_eliminar = st.tabs(
-        ["➕ Agregar directiva a grupo", "🗑 Eliminar directivas"]
-    )
+    # ==========================
+    # Formulario de creación
+    # ==========================
+    with st.form("form_crear_directiva"):
+        nombre_dir = st.text_input("Nombre de la persona de la directiva")
+        dui_dir = st.text_input("DUI de la directiva (sin guiones o como lo manejes)")
+        contr_dir = st.text_input("Contraseña para la directiva", type="password")
 
-    # ------------------------------------------------------------------
-    # TAB 1: CREAR / AGREGAR DIRECTIVA
-    # ------------------------------------------------------------------
-    with tab_crear:
-        st.markdown("### Agregar nueva directiva a un grupo")
-
-        label_sel = st.selectbox(
-            "Selecciona el grupo donde se agregará la directiva",
-            list(opciones_grupos.keys()),
-            key="sel_grupo_directiva_crear",
+        etiqueta_grupo = st.selectbox(
+            "Grupo al que pertenece la directiva",
+            list(mapa_grupos.keys()),
         )
-        id_grupo_sel = opciones_grupos[label_sel]
+        id_grupo_sel = mapa_grupos[etiqueta_grupo]
 
-        nombre_dir = st.text_input(
-            "Nombre de la directiva", key="nombre_dir_crear"
-        )
-        dui_dir_in = st.text_input(
-            "DUI de la directiva (con o sin guiones)",
-            key="dui_dir_crear",
-        )
-        password = st.text_input(
-            "Contraseña para la cuenta de directiva",
-            type="password",
-            key="pass_dir_crear",
-        )
+        enviar = st.form_submit_button("Crear directiva")
 
-        if st.button(
-            "Guardar nueva directiva para este grupo",
-            key="btn_crear_directiva",
-        ):
-            if not nombre_dir or not dui_dir_in or not password:
-                st.warning("Todos los campos son obligatorios.")
-            else:
-                # Normalizamos DUI (solo dígitos)
-                dui_dir = "".join(ch for ch in dui_dir_in if ch.isdigit())
-
-                if len(dui_dir) != 9:
-                    st.warning("El DUI debe tener exactamente 9 dígitos.")
-                else:
-                    id_rol_dir = _id_rol_directiva()
-                    if not id_rol_dir:
-                        st.error(
-                            "No se encontró el rol 'DIRECTIVA' en la tabla 'rol'."
-                        )
-                    else:
-                        # 1) Crear / actualizar usuario en tabla Usuario
-                        usu = fetch_one(
-                            "SELECT Id_usuario FROM Usuario WHERE DUI = %s",
-                            (dui_dir,),
-                        )
-                        if usu:
-                            # Ya existe el usuario → actualizamos nombre, contraseña y rol
-                            execute(
-                                """
-                                UPDATE Usuario
-                                SET Nombre = %s,
-                                    Contraseña = %s,
-                                    Id_rol = %s
-                                WHERE Id_usuario = %s
-                                """,
-                                (
-                                    nombre_dir.strip(),
-                                    password,
-                                    id_rol_dir,
-                                    usu["Id_usuario"],
-                                ),
-                            )
-                        else:
-                            # No existe → lo creamos
-                            execute(
-                                """
-                                INSERT INTO Usuario (Nombre, DUI, Contraseña, Id_rol)
-                                VALUES (%s, %s, %s, %s)
-                                """,
-                                (
-                                    nombre_dir.strip(),
-                                    dui_dir,
-                                    password,
-                                    id_rol_dir,
-                                ),
-                                return_last_id=True,
-                            )
-
-                        # 2) Insertar registro en tabla directiva (puede haber varias por grupo)
-                        hoy = date.today()
-                        execute(
-                            """
-                            INSERT INTO directiva (Nombre, DUI, Id_grupo, Creado_en)
-                            VALUES (%s, %s, %s, %s)
-                            """,
-                            (
-                                nombre_dir.strip(),
-                                dui_dir,
-                                id_grupo_sel,
-                                hoy,
-                            ),
-                        )
-
-                        st.success(
-                            "Directiva creada y asociada al grupo correctamente."
-                        )
-                        _do_rerun()
-
-    # ------------------------------------------------------------------
-    # TAB 2: ELIMINAR DIRECTIVAS
-    # ------------------------------------------------------------------
-    with tab_eliminar:
-        st.markdown("### Eliminar directivas de un grupo")
-
-        label_sel2 = st.selectbox(
-            "Selecciona el grupo a gestionar",
-            list(opciones_grupos.keys()),
-            key="sel_grupo_directiva_eliminar",
-        )
-        id_grupo_sel2 = opciones_grupos[label_sel2]
-
-        directivas = fetch_all(
-            """
-            SELECT Id_directiva, Nombre, DUI
-            FROM directiva
-            WHERE Id_grupo = %s
-            ORDER BY Nombre
-            """,
-            (id_grupo_sel2,),
-        )
-
-        if not directivas:
-            st.info("Este grupo aún no tiene directivas registradas.")
+    if enviar:
+        # Validaciones básicas
+        if not (nombre_dir.strip() and dui_dir.strip() and contr_dir.strip()):
+            st.warning("Completa nombre, DUI y contraseña.")
             return
 
-        opciones_dir = {
-            f"{d['Nombre']} — DUI {d['DUI']} (Id {d['Id_directiva']})": d[
-                "Id_directiva"
-            ]
-            for d in directivas
-        }
+        # Verificar que exista el rol DIRECTIVA
+        rol_dir = fetch_one(
+            "SELECT Id_rol FROM rol WHERE `Tipo de rol` = 'DIRECTIVA' LIMIT 1"
+        )
+        if not rol_dir:
+            st.error(
+                "No se encontró el rol 'DIRECTIVA' en la tabla 'rol'. "
+                "Pídele al administrador que lo cree."
+            )
+            return
 
-        seleccion = st.multiselect(
-            "Selecciona las directivas que deseas eliminar",
-            list(opciones_dir.keys()),
-            key="multiselect_directivas_eliminar",
+        id_rol_directiva = rol_dir["Id_rol"]
+
+        # Verificar que el DUI no exista ya como usuario (para evitar conflictos)
+        existe_usuario = fetch_one(
+            "SELECT Id_usuario FROM Usuario WHERE DUI = %s LIMIT 1", (dui_dir,)
+        )
+        if existe_usuario:
+            st.warning(
+                "Ya existe un usuario con ese DUI. "
+                "Si es una directiva previa, usa sus credenciales existentes."
+            )
+            return
+
+        # Insertar en Usuario
+        hoy = dt.date.today()
+        id_usuario_nuevo = execute(
+            """
+            INSERT INTO Usuario (Nombre, DUI, Contraseña, Id_rol)
+            VALUES (%s, %s, %s, %s)
+            """,
+            (nombre_dir.strip(), dui_dir.strip(), contr_dir.strip(), id_rol_directiva),
+            return_last_id=True,
         )
 
-        ids_seleccionados = [opciones_dir[s] for s in seleccion]
+        # Insertar en tabla directiva
+        execute(
+            """
+            INSERT INTO directiva (Nombre, DUI, Id_grupo, Creado_en)
+            VALUES (%s, %s, %s, %s)
+            """,
+            (nombre_dir.strip(), dui_dir.strip(), id_grupo_sel, hoy),
+        )
 
-        if st.button(
-            "Eliminar directivas seleccionadas", key="btn_eliminar_directivas"
-        ):
-            if not ids_seleccionados:
-                st.warning("No has seleccionado ninguna directiva.")
-            else:
-                placeholders = ",".join(["%s"] * len(ids_seleccionados))
-                execute(
-                    f"DELETE FROM directiva WHERE Id_directiva IN ({placeholders})",
-                    tuple(ids_seleccionados),
-                )
-                st.success("Directivas eliminadas correctamente.")
-                _do_rerun()
+        st.success(
+            f"Directiva creada correctamente y asociada al grupo {etiqueta_grupo}. "
+            f"(Id_usuario={id_usuario_nuevo})"
+        )
+        st.rerun()
+
+    # ==========================
+    # Listado de directivas
+    # ==========================
+    st.markdown("---")
+    st.subheader("Directivas registradas en tus grupos")
+
+    directivas = _listar_directivas_de_promotora(promotora["DUI"])
+    if directivas:
+        st.table(directivas)
+    else:
+        st.info("Aún no hay directivas registradas en tus grupos.")
