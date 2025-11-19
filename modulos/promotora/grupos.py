@@ -49,18 +49,14 @@ def _crear_grupo(promotora: dict):
 
     st.caption(f"Promotora principal: {prom['Nombre']} — DUI: {prom['DUI']}")
 
-    # Nombre del grupo
     nombre_grupo = st.text_input(
         "Nombre del grupo",
         key="crear_grupo_nombre",
     )
 
-    # Distritos
     distritos = _cargar_distritos()
     if distritos:
-        opciones_dist = {
-            d["Nombre"]: d["Id_distrito"] for d in distritos
-        }
+        opciones_dist = {d["Nombre"]: d["Id_distrito"] for d in distritos}
         nombre_dist_sel = st.selectbox(
             "Distrito",
             list(opciones_dist.keys()),
@@ -80,7 +76,6 @@ def _crear_grupo(promotora: dict):
         dui_principal = _normalizar_dui(dui_usuario)
 
         try:
-            # Estado se deja fijo como ACTIVO al crearse
             sql = """
                 INSERT INTO grupos
                     (Nombre, Id_distrito, Estado, Creado_por, Creado_en, DUIs_promotoras, Id_promotora)
@@ -94,8 +89,8 @@ def _crear_grupo(promotora: dict):
                     "ACTIVO",
                     prom["Id_promotora"],
                     hoy,
-                    dui_principal,         # cadena CSV de DUIs de promotoras
-                    prom["Id_promotora"],  # promotora principal
+                    dui_principal,
+                    prom["Id_promotora"],
                 ),
             )
             st.success("Grupo creado correctamente.")
@@ -113,7 +108,6 @@ def _mis_grupos(promotora: dict):
 
     dui_prom = _normalizar_dui(promotora["DUI"])
 
-    # Traer solo los grupos donde aparezca el DUI de la promotora
     sql = """
         SELECT g.Id_grupo,
                g.Nombre,
@@ -132,7 +126,6 @@ def _mis_grupos(promotora: dict):
         st.info("Aún no hay grupos donde tu DUI aparezca como promotora responsable.")
         return
 
-    # Tabla al estilo que ya usas
     df = pd.DataFrame(filas)
     df = df.rename(
         columns={
@@ -150,9 +143,7 @@ def _mis_grupos(promotora: dict):
     )
     st.dataframe(df, use_container_width=True)
 
-    # ──────────────────────────────────────────────
-    # Eliminar grupo
-    # ──────────────────────────────────────────────
+    # ─ Eliminar grupo
     st.markdown("---")
     st.markdown("### Eliminar grupo")
 
@@ -180,7 +171,6 @@ def _mis_grupos(promotora: dict):
         disabled=not confirmar,
     ):
         try:
-            # Si quieres, aquí también puedes borrar otras tablas relacionadas (directiva, etc.)
             execute("DELETE FROM directiva WHERE Id_grupo = %s", (id_grupo_elim,))
             execute("DELETE FROM grupos WHERE Id_grupo = %s", (id_grupo_elim,))
             st.success("Grupo eliminado correctamente.")
@@ -188,9 +178,7 @@ def _mis_grupos(promotora: dict):
         except Exception as e:
             st.error(f"Error al eliminar el grupo: {e}")
 
-    # ──────────────────────────────────────────────
-    # Gestionar promotoras asignadas a un grupo
-    # ──────────────────────────────────────────────
+    # ─ Gestionar promotoras
     st.markdown("---")
     st.markdown("### Gestionar promotoras asignadas a un grupo")
 
@@ -203,15 +191,10 @@ def _mis_grupos(promotora: dict):
 
     fila_sel = next(row for row in filas if row["Id_grupo"] == id_grupo_gestion)
     cadena_duis = fila_sel.get("DUIs_promotoras") or ""
-    duis_actuales = [
-        d.strip() for d in cadena_duis.split(",") if d.strip()
-    ]
+    duis_actuales = [d.strip() for d in cadena_duis.split(",") if d.strip()]
 
     if duis_actuales:
-        st.write(
-            "DUIs asignados actualmente:",
-            ", ".join(duis_actuales),
-        )
+        st.write("DUIs asignados actualmente:", ", ".join(duis_actuales))
     else:
         st.write("Este grupo no tiene DUIs de promotoras asignados aún.")
 
@@ -230,7 +213,6 @@ def _mis_grupos(promotora: dict):
             key="btn_quitar_duis",
             disabled=not duis_quitar,
         ):
-            # Evitar que la promotora actual se quite a sí misma si es la única
             nuevos = [d for d in duis_actuales if d not in duis_quitar]
 
             if not nuevos:
@@ -268,7 +250,6 @@ def _mis_grupos(promotora: dict):
         elif dui_nuevo_norm in duis_actuales:
             st.warning("Ese DUI ya está asignado al grupo.")
         else:
-            # Verificar que exista en la tabla promotora
             prom_add = _obtener_promotora_por_dui(dui_nuevo_norm)
             if not prom_add:
                 st.error(
@@ -291,32 +272,28 @@ def _mis_grupos(promotora: dict):
 # ──────────────────────────────────────────────
 # Panel principal de promotora
 # ──────────────────────────────────────────────
+# 🔴 AQUÍ está el cambio importante: el decorador SIN argumentos
 
-@require_auth(["PROMOTORA"])
+@require_auth
 def promotora_panel(promotora: dict):
     """
     Panel de la promotora.
     'promotora' viene del login y contiene al menos:
     - promotora["Nombre"]
     - promotora["DUI"]
-    - promotora["Rol"] (PROMOTORA)
     """
     st.title("Panel de Promotora")
 
     tabs = st.tabs(["Crear grupo", "Mis grupos", "Crear Directiva", "Reportes"])
 
-    # Crear grupo
     with tabs[0]:
         _crear_grupo(promotora)
 
-    # Mis grupos + gestión
     with tabs[1]:
         _mis_grupos(promotora)
 
-    # Crear/gestionar directivas (implementado en directiva.py)
     with tabs[2]:
         crear_directiva_panel(promotora)
 
-    # Reportes (placeholder)
     with tabs[3]:
         st.info("Módulo de reportes en construcción.")
