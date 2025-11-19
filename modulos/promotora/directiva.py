@@ -82,7 +82,7 @@ def crear_directiva_panel(promotora: dict):
     }
 
     # ==========================
-    # Formulario de creación
+    # Formulario de creación (NUEVA DIRECTIVA + USUARIO)
     # ==========================
     with st.form("form_crear_directiva"):
         nombre_dir = st.text_input("Nombre de la persona de la directiva")
@@ -123,7 +123,8 @@ def crear_directiva_panel(promotora: dict):
         if existe_usuario:
             st.warning(
                 "Ya existe un usuario con ese DUI. "
-                "Si es una directiva previa, usa sus credenciales existentes."
+                "Si es una directiva previa, usa sus credenciales existentes "
+                "o la sección de 'Asignar directiva existente a un grupo'."
             )
             return
 
@@ -164,3 +165,123 @@ def crear_directiva_panel(promotora: dict):
         st.table(directivas)
     else:
         st.info("Aún no hay directivas registradas en tus grupos.")
+
+    # ============================================================
+    # >>> NUEVO: Eliminar directiva de un grupo
+    # ============================================================
+    if directivas:
+        st.markdown("---")
+        st.subheader("Eliminar directiva de un grupo")
+
+        opciones_dir = {
+            f"{d['Id_directiva']} - {d['Nombre']} (Grupo {d['Id_grupo']} - {d['Grupo']}, DUI {d['DUI']})": d
+            for d in directivas
+        }
+
+        etiqueta_dir = st.selectbox(
+            "Selecciona la directiva que deseas eliminar",
+            list(opciones_dir.keys()),
+            key="sel_directiva_eliminar",
+        )
+        dir_sel = opciones_dir.get(etiqueta_dir)
+
+        confirmar_elim = st.checkbox(
+            "Confirmo que deseo eliminar esta directiva del grupo.",
+            key="chk_eliminar_directiva",
+        )
+
+        if st.button("Eliminar directiva", type="secondary", key="btn_eliminar_directiva"):
+            if not dir_sel:
+                st.warning("Debes seleccionar una directiva.")
+            elif not confirmar_elim:
+                st.warning("Debes marcar la casilla de confirmación.")
+            else:
+                execute(
+                    "DELETE FROM directiva WHERE Id_directiva = %s",
+                    (dir_sel["Id_directiva"],),
+                )
+                st.success("Directiva eliminada correctamente del grupo.")
+                st.rerun()
+
+    # ============================================================
+    # >>> NUEVO: Asignar directiva EXISTENTE a un grupo ya creado
+    # ============================================================
+    st.markdown("---")
+    st.subheader("Asignar directiva existente a un grupo ya creado")
+
+    st.caption(
+        "Usa esta sección cuando la persona que estaba a cargo se retira "
+        "y quieres asignar a otra directiva que ya tiene usuario creado."
+    )
+
+    with st.form("form_asignar_directiva_existente"):
+        dui_exist = st.text_input(
+            "DUI de la directiva existente (debe tener usuario con rol DIRECTIVA)",
+            key="dui_directiva_existente",
+        )
+        etiqueta_grupo2 = st.selectbox(
+            "Grupo al que deseas asignarla",
+            list(mapa_grupos.keys()),
+            key="grupo_asignar_existente",
+        )
+        id_grupo_sel2 = mapa_grupos[etiqueta_grupo2]
+
+        enviar_asignar = st.form_submit_button("Asignar directiva existente al grupo")
+
+    if enviar_asignar:
+        dui_exist = (dui_exist or "").strip()
+        if not dui_exist:
+            st.warning("Debes escribir el DUI de la directiva existente.")
+            return
+
+        # Verificar que exista como usuario con rol DIRECTIVA
+        usuario_dir = fetch_one(
+            """
+            SELECT u.Id_usuario, u.Nombre, u.DUI, r.`Tipo de rol`
+            FROM Usuario u
+            JOIN rol r ON r.Id_rol = u.Id_rol
+            WHERE u.DUI = %s AND r.`Tipo de rol` = 'DIRECTIVA'
+            LIMIT 1
+            """,
+            (dui_exist,),
+        )
+
+        if not usuario_dir:
+            st.error(
+                "No se encontró un usuario con ese DUI y rol 'DIRECTIVA'. "
+                "Primero crea el usuario en la sección de arriba o pide al administrador que lo cree."
+            )
+            return
+
+        # Verificar que no esté ya asignada esa directiva al grupo
+        existe_dir_grupo = fetch_one(
+            """
+            SELECT Id_directiva 
+            FROM directiva 
+            WHERE DUI = %s AND Id_grupo = %s 
+            LIMIT 1
+            """,
+            (dui_exist, id_grupo_sel2),
+        )
+
+        if existe_dir_grupo:
+            st.info(
+                "Esa directiva ya está registrada para el grupo seleccionado."
+            )
+            return
+
+        # Insertar solo en tabla directiva (NO se crea usuario nuevo)
+        hoy2 = dt.date.today()
+        execute(
+            """
+            INSERT INTO directiva (Nombre, DUI, Id_grupo, Creado_en)
+            VALUES (%s, %s, %s, %s)
+            """,
+            (usuario_dir["Nombre"], usuario_dir["DUI"], id_grupo_sel2, hoy2),
+        )
+
+        st.success(
+            f"Directiva existente (DUI {usuario_dir['DUI']}) asignada correctamente "
+            f"al grupo {etiqueta_grupo2}."
+        )
+        st.rerun()
