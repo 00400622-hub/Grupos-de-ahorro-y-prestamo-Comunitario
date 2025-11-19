@@ -41,7 +41,7 @@ def _normalizar_duis(cadena: str) -> str:
     Limpia una cadena de DUIs separados por comas:
     - Quita espacios
     - Elimina elementos vacíos
-    - Devuelve de nuevo separado por comas
+    - Devuelve de nuevo separados por comas
     """
     if not cadena:
         return ""
@@ -69,7 +69,7 @@ def _crear_grupo(promotora: dict):
         list(mapa_distritos.keys()) if mapa_distritos else [],
     )
 
-    # NUEVO: DUI(s) de promotoras
+    # DUI(s) de promotoras
     duis_default = promotora["DUI"] if promotora else ""
     duis_promotoras_input = st.text_input(
         "DUI(s) de promotora(s) responsables (separados por comas)",
@@ -118,7 +118,7 @@ def _crear_grupo(promotora: dict):
             ),
         )
         st.success("Grupo creado correctamente.")
-        st.experimental_rerun()
+        st.rerun()   # <--- antes estaba st.experimental_rerun()
 
 
 # ==========================
@@ -193,7 +193,7 @@ def _mis_grupos(promotora: dict):
             (duis_norm, grupo_sel["Id_grupo"]),
         )
         st.success("Promotoras actualizadas para el grupo.")
-        st.experimental_rerun()
+        st.rerun()   # <--- antes estaba st.experimental_rerun()
 
 
 # ==========================
@@ -234,7 +234,7 @@ def promotora_panel():
     with pestañas[1]:
         _mis_grupos(promotora)
 
-    # Las otras pestañas las puedes ir llenando después
+    # Las otras pestañas las puedes llenar después
     with pestañas[2]:
         st.info("Aquí luego implementamos la creación de Directiva del grupo.")
 
