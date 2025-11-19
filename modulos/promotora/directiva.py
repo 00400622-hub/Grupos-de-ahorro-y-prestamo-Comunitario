@@ -39,7 +39,6 @@ def _listar_directivas_de_promotora(dui_promotora: str):
             dir.DUI,
             g.Id_grupo,
             g.Nombre AS Grupo,
-            g.DUIs_promotoras,
             dir.Creado_en
         FROM directiva dir
         JOIN grupos g ON g.Id_grupo = dir.Id_grupo
@@ -47,6 +46,35 @@ def _listar_directivas_de_promotora(dui_promotora: str):
         ORDER BY dir.Id_directiva
     """
     return fetch_all(sql, (dui_promotora,))
+
+
+def _eliminar_directiva(id_directiva: int):
+    """
+    Elimina la directiva indicada y, si existe, también elimina el usuario
+    asociado en la tabla Usuario (solo si su rol es DIRECTIVA).
+    """
+    info = fetch_one(
+        "SELECT Id_directiva, DUI FROM directiva WHERE Id_directiva = %s LIMIT 1",
+        (id_directiva,),
+    )
+    if not info:
+        st.error("No se encontró la directiva seleccionada.")
+        return
+
+    dui_dir = info["DUI"]
+
+    # 1) Eliminar de la tabla directiva
+    execute("DELETE FROM directiva WHERE Id_directiva = %s", (id_directiva,))
+
+    # 2) Eliminar usuario solo si su rol es DIRECTIVA
+    execute(
+        """
+        DELETE u FROM Usuario u
+        JOIN rol r ON r.Id_rol = u.Id_rol
+        WHERE u.DUI = %s AND r.`Tipo de rol` = 'DIRECTIVA'
+        """,
+        (dui_dir,),
+    )
 
 
 @has_role("PROMOTORA")
@@ -63,6 +91,10 @@ def crear_directiva_panel(promotora: dict):
 
     st.caption(
         f"Promotora: {promotora['Nombre']} — DUI: {promotora['DUI']}"
+    )
+    st.info(
+        "Puedes registrar **más de una directiva por cada grupo**. "
+        "Solo vuelve a llenar el formulario seleccionando el mismo grupo."
     )
 
     # ==========================
@@ -164,3 +196,35 @@ def crear_directiva_panel(promotora: dict):
         st.table(directivas)
     else:
         st.info("Aún no hay directivas registradas en tus grupos.")
+        return
+
+    # ==========================
+    # Eliminar directiva
+    # ==========================
+    st.markdown("---")
+    st.subheader("Eliminar directiva")
+
+    opciones = {
+        f"{d['Id_directiva']} - {d['Nombre']} (Grupo {d['Grupo']}, DUI {d['DUI']})": d[
+            "Id_directiva"
+        ]
+        for d in directivas
+    }
+
+    etiqueta_dir = st.selectbox(
+        "Selecciona la directiva a eliminar",
+        list(opciones.keys()),
+    )
+    id_dir_sel = opciones[etiqueta_dir]
+
+    confirmar = st.checkbox(
+        "Confirmo que deseo eliminar esta directiva y el usuario DIRECTIVA asociado."
+    )
+
+    if st.button("Eliminar directiva"):
+        if not confirmar:
+            st.warning("Debes marcar la casilla de confirmación.")
+        else:
+            _eliminar_directiva(id_dir_sel)
+            st.success("Directiva eliminada correctamente.")
+            st.rerun()
