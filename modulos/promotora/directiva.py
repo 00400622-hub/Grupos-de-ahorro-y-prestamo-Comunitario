@@ -94,7 +94,8 @@ def crear_directiva_panel(promotora: dict):
     )
     st.info(
         "Puedes registrar **más de una directiva por cada grupo**. "
-        "Solo vuelve a llenar el formulario seleccionando el mismo grupo."
+        "Para agregar otra directiva al mismo grupo, solo vuelve a llenar el "
+        "formulario seleccionando ese grupo."
     )
 
     # ==========================
@@ -196,7 +197,6 @@ def crear_directiva_panel(promotora: dict):
         st.table(directivas)
     else:
         st.info("Aún no hay directivas registradas en tus grupos.")
-        return
 
     # ==========================
     # Eliminar directiva
@@ -204,27 +204,30 @@ def crear_directiva_panel(promotora: dict):
     st.markdown("---")
     st.subheader("Eliminar directiva")
 
-    opciones = {
-        f"{d['Id_directiva']} - {d['Nombre']} (Grupo {d['Grupo']}, DUI {d['DUI']})": d[
-            "Id_directiva"
-        ]
-        for d in directivas
-    }
+    if directivas:
+        opciones = {
+            f"{d['Id_directiva']} - {d['Nombre']} (Grupo {d['Grupo']}, DUI {d['DUI']})": d[
+                "Id_directiva"
+            ]
+            for d in directivas
+        }
 
-    etiqueta_dir = st.selectbox(
-        "Selecciona la directiva a eliminar",
-        list(opciones.keys()),
-    )
-    id_dir_sel = opciones[etiqueta_dir]
+        etiqueta_dir = st.selectbox(
+            "Selecciona la directiva a eliminar",
+            list(opciones.keys()),
+        )
+        id_dir_sel = opciones[etiqueta_dir]
 
-    confirmar = st.checkbox(
-        "Confirmo que deseo eliminar esta directiva y el usuario DIRECTIVA asociado."
-    )
+        confirmar = st.checkbox(
+            "Confirmo que deseo eliminar esta directiva y el usuario DIRECTIVA asociado."
+        )
 
-    if st.button("Eliminar directiva"):
-        if not confirmar:
-            st.warning("Debes marcar la casilla de confirmación.")
-        else:
-            _eliminar_directiva(id_dir_sel)
-            st.success("Directiva eliminada correctamente.")
-            st.rerun()
+        if st.button("Eliminar directiva"):
+            if not confirmar:
+                st.warning("Debes marcar la casilla de confirmación.")
+            else:
+                _eliminar_directiva(id_dir_sel)
+                st.success("Directiva eliminada correctamente.")
+                st.rerun()
+    else:
+        st.warning("Todavía no hay directivas para eliminar.")
