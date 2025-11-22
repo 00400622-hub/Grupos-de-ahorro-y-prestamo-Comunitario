@@ -1,81 +1,236 @@
+# modulos/directiva/panel.py
+
 import streamlit as st
-from modulos.config.conexion import fetch_one
+from datetime import date
+
+from modulos.config.conexion import fetch_all, fetch_one, execute
+from modulos.auth.rbac import require_auth, has_role, get_user
 
 
-def directiva_panel():
+# -------------------------------------------------------
+# Helpers: obtener directiva y grupo asignado
+# -------------------------------------------------------
+def _obtener_directiva_actual():
     """
-    Panel principal de la DIRECTIVA.
-    Muestra solo la información del grupo que tiene asignado
-    en la tabla 'directiva' (por el DUI del usuario logueado).
+    Busca en la tabla 'directiva' usando el DUI del usuario en sesión.
+    Devuelve dict con datos de la directiva y del grupo.
     """
-    st.title("Panel de Directiva")
-
-    # 1. Usuario actual desde la sesión
-    user = st.session_state.get("usuario")
+    user = get_user()
     if not user:
-        st.error("No hay sesión iniciada.")
-        return
+        return None, None
 
-    dui = user.get("DUI")
-    if not dui:
-        st.error("El usuario actual no tiene DUI registrado.")
-        return
-
-    # 2. Buscar en tabla 'directiva' qué grupo tiene asignado
+    # Directiva identificada por DUI
     dir_row = fetch_one(
-        "SELECT Id_directiva, Id_grupo, Nombre FROM directiva WHERE DUI = %s",
-        (dui,),
+        """
+        SELECT d.Id_directiva, d.Nombre, d.DUI, d.Id_grupo, d.Creado_en
+        FROM directiva d
+        WHERE d.DUI = %s
+        LIMIT 1
+        """,
+        (user["DUI"],),
     )
 
     if not dir_row:
-        st.error(
-            "No se encontró un registro de directiva asociado a este usuario.\n\n"
-            "Verifica que la promotora haya creado este usuario en la sección "
-            "'Crear Directiva' y que el DUI coincida."
-        )
-        return
+        return None, None
 
-    id_grupo = dir_row["Id_grupo"]
-
-    st.info(
-        f"Directiva: **{dir_row['Nombre']}** (DUI: {dui}) – "
-        f"Id_directiva={dir_row['Id_directiva']}"
-    )
-
-    # 3. Obtener datos del grupo asignado
     grupo = fetch_one(
         """
-        SELECT g.Id_grupo,
-               g.Nombre       AS Grupo,
-               d.Nombre       AS Distrito,
-               g.Estado,
-               g.Creado_en
+        SELECT g.Id_grupo, g.Nombre, d.Nombre AS Distrito
         FROM grupos g
-        JOIN distritos d ON g.Id_distrito = d.Id_distrito
+        LEFT JOIN distritos d ON d.Id_distrito = g.Id_distrito
         WHERE g.Id_grupo = %s
+        LIMIT 1
+        """,
+        (dir_row["Id_grupo"],),
+    )
+
+    return dir_row, grupo
+
+
+# -------------------------------------------------------
+# TAB 1: Reglamento interno
+# -------------------------------------------------------
+def _tab_reglamento(dir_row: dict, grupo: dict):
+    st.subheader("Reglamento interno del grupo")
+
+    st.caption(
+        f"Directiva: {dir_row['Nombre']} — DUI: {dir_row['DUI']}  |  "
+        f"Grupo: {grupo['Nombre']} ({grupo.get('Distrito','')})"
+    )
+
+    id_grupo = grupo["Id_grupo"]
+
+    # 1) Mostrar reglas existentes
+    reglas = fetch_all(
+        """
+        SELECT Id_regla, Numero_regla, Texto, Creado_en
+        FROM reglas_internas
+        WHERE Id_grupo = %s
+        ORDER BY Numero_regla ASC
         """,
         (id_grupo,),
     )
 
-    if not grupo:
-        st.error("El grupo asignado a esta directiva ya no existe.")
+    if reglas:
+        st.write("Reglas registradas para este grupo:")
+        st.table(reglas)
+    else:
+        st.info("Aún no hay reglas registradas para este grupo.")
+
+    st.markdown("---")
+
+    # 2) Agregar nueva regla
+    st.markdown("### Agregar nueva regla")
+
+    with st.form("form_nueva_regla"):
+        texto = st.text_area(
+            "Texto de la regla",
+            help="Describe claramente la regla tal como aparece en el formulario de reglas internas.",
+        )
+        enviar = st.form_submit_button("Guardar nueva regla")
+
+    if enviar:
+        if not texto.strip():
+            st.warning("El texto de la regla no puede estar vacío.")
+        else:
+            # Calcular siguiente número de regla
+            fila = fetch_one(
+                """
+                SELECT COALESCE(MAX(Numero_regla), 0) + 1 AS siguiente
+                FROM reglas_internas
+                WHERE Id_grupo = %s
+                """,
+                (id_grupo,),
+            )
+            sig_num = fila["siguiente"]
+
+            execute(
+                """
+                INSERT INTO reglas_internas (Id_grupo, Numero_regla, Texto, Creado_en)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (id_grupo, sig_num, texto.strip(), date.today()),
+            )
+            st.success(f"Regla #{sig_num} agregada correctamente.")
+            st.rerun()
+
+    # 3) Eliminar regla existente
+    st.markdown("---")
+    st.markdown("### Eliminar una regla")
+
+    if not reglas:
+        st.info("No hay reglas para eliminar.")
         return
 
-    # 4. Mostrar información básica del grupo
-    st.subheader("Grupo asignado")
+    opciones_reglas = {
+        f"{r['Numero_regla']} - {r['Texto'][:60]}": r["Id_regla"] for r in reglas
+    }
 
-    st.markdown(
-        f"""
-        - **Id_grupo:** {grupo['Id_grupo']}
-        - **Nombre del grupo:** {grupo['Grupo']}
-        - **Distrito:** {grupo['Distrito']}
-        - **Estado:** {grupo['Estado']}
-        - **Creado en:** {grupo['Creado_en']}
-        """
+    etiqueta_sel = st.selectbox(
+        "Selecciona la regla a eliminar",
+        list(opciones_reglas.keys()),
+        key="regla_a_eliminar",
+    )
+    id_regla_sel = opciones_reglas[etiqueta_sel]
+
+    confirmar = st.checkbox(
+        "Confirmo que deseo eliminar la regla seleccionada.",
+        key="chk_eliminar_regla",
     )
 
-    st.info(
-        "A partir de aquí puedes ir agregando las funcionalidades propias "
-        "de la directiva: registrar reuniones, asistencias, ahorros, "
-        "préstamos, caja, etc. Siempre usando el `Id_grupo` asignado."
+    if st.button("Eliminar regla", type="secondary"):
+        if not confirmar:
+            st.warning("Debes marcar la casilla de confirmación.")
+        else:
+            execute(
+                "DELETE FROM reglas_internas WHERE Id_regla = %s AND Id_grupo = %s",
+                (id_regla_sel, id_grupo),
+            )
+            st.success("Regla eliminada correctamente.")
+            st.rerun()
+
+
+# -------------------------------------------------------
+# Placeholders para las otras pestañas
+# (las iremos llenando poco a poco)
+# -------------------------------------------------------
+def _tab_miembros(dir_row: dict, grupo: dict):
+    st.subheader("Miembros del grupo")
+    st.info("Aquí implementaremos el registro de miembros (Id_miembro, Nombre, DUI, Cargo).")
+
+
+def _tab_asistencia(dir_row: dict, grupo: dict):
+    st.subheader("Asistencia a reuniones")
+    st.info("Aquí implementaremos el formulario de asistencia según tu PDF.")
+
+
+def _tab_ahorros(dir_row: dict, grupo: dict):
+    st.subheader("Ahorros")
+    st.info("Aquí implementaremos el registro de ahorros (ahorro normal, ahorro final, etc.).")
+
+
+def _tab_caja_prestamos(dir_row: dict, grupo: dict):
+    st.subheader("Caja y préstamos")
+    st.info("Aquí implementaremos movimientos de caja y control de préstamos.")
+
+
+def _tab_multas(dir_row: dict, grupo: dict):
+    st.subheader("Multas")
+    st.info("Aquí implementaremos la asignación y pago de multas basadas en las reglas.")
+
+
+def _tab_cierre_ciclo(dir_row: dict, grupo: dict):
+    st.subheader("Cierre de ciclo")
+    st.info("Aquí implementaremos los cálculos de cierre de ciclo y distribución de ahorros.")
+
+
+# -------------------------------------------------------
+# Panel principal de Directiva
+# -------------------------------------------------------
+@require_auth
+@has_role("DIRECTIVA")
+def directiva_panel():
+    dir_row, grupo = _obtener_directiva_actual()
+
+    if not dir_row or not grupo:
+        st.error(
+            "No se encontró un registro de directiva asociado a tu usuario. "
+            "Verifica en la tabla 'directiva' que el DUI coincida con el usuario "
+            "con el que estás iniciando sesión."
+        )
+        return
+
+    st.title("Panel de Directiva")
+
+    tabs = st.tabs(
+        [
+            "Reglamento",
+            "Miembros",
+            "Asistencia",
+            "Ahorros",
+            "Caja / Préstamos",
+            "Multas",
+            "Cierre de ciclo",
+        ]
     )
+
+    with tabs[0]:
+        _tab_reglamento(dir_row, grupo)
+
+    with tabs[1]:
+        _tab_miembros(dir_row, grupo)
+
+    with tabs[2]:
+        _tab_asistencia(dir_row, grupo)
+
+    with tabs[3]:
+        _tab_ahorros(dir_row, grupo)
+
+    with tabs[4]:
+        _tab_caja_prestamos(dir_row, grupo)
+
+    with tabs[5]:
+        _tab_multas(dir_row, grupo)
+
+    with tabs[6]:
+        _tab_cierre_ciclo(dir_row, grupo)
