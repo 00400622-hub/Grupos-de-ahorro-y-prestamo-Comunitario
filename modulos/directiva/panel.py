@@ -1,3 +1,4 @@
+
 # modulos/directiva/panel.py
 
 import datetime as dt
