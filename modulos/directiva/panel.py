@@ -3,17 +3,18 @@
 import datetime as dt
 import streamlit as st
 
-from modulos.config.conexion import fetch_one, execute
-from modulos.auth.rbac import get_user, require_auth, has_role
+from modulos.config.conexion import fetch_one, fetch_all, execute
+from modulos.auth.rbac import require_auth, has_role, get_user
 
 
-# --------------------------------------------------------------------
-# Helpers de base de datos
-# --------------------------------------------------------------------
-def _obtener_info_directiva():
+# ============================================================
+# Helpers de acceso a datos
+# ============================================================
+
+def _obtener_info_directiva_actual():
     """
-    Devuelve la información básica de la directiva actualmente logueada
-    y el grupo al que pertenece.
+    Devuelve la info de la directiva que está logueada,
+    junto con el grupo al que pertenece.
     """
     user = get_user()
     if not user:
@@ -22,11 +23,12 @@ def _obtener_info_directiva():
     sql = """
         SELECT
             d.Id_directiva,
-            d.Nombre,
-            d.DUI,
-            d.Id_grupo,
-            g.Nombre AS Grupo,
-            g.Creado_en AS Fecha_creacion_grupo
+            d.Nombre        AS Nombre_directiva,
+            d.DUI           AS DUI_directiva,
+            d.Creado_en     AS Fecha_creada_directiva,
+            g.Id_grupo,
+            g.Nombre        AS Nombre_grupo,
+            g.Creado_en     AS Fecha_creacion_grupo
         FROM directiva d
         JOIN grupos g ON g.Id_grupo = d.Id_grupo
         WHERE d.DUI = %s
@@ -37,7 +39,7 @@ def _obtener_info_directiva():
 
 def _obtener_reglamento_por_grupo(id_grupo: int):
     """
-    Busca si ya existe un reglamento para el grupo.
+    Devuelve el reglamento asociado a un grupo (si existe).
     """
     sql = """
         SELECT
@@ -54,37 +56,45 @@ def _obtener_reglamento_por_grupo(id_grupo: int):
             Condiciones_prestamo,
             Fecha_inicio_ciclo,
             Fecha_fin_ciclo,
-            Meta_social
-        FROM reglamento
+            Meta_social,
+            Interes_por_10,
+            Prestamo_maximo,
+            Plazo_maximo_meses
+        FROM reglamento_grupo
         WHERE Id_grupo = %s
         LIMIT 1
     """
     return fetch_one(sql, (id_grupo,))
 
 
-def _guardar_reglamento(
-    id_grupo: int,
-    nombre_comunidad: str,
-    fecha_formacion: dt.date,
-    reunion_dia: str,
-    reunion_hora: str,
-    reunion_lugar: str,
-    reunion_frecuencia: str,
-    monto_multa: float,
-    ahorro_minimo: float,
-    texto_condiciones_prestamo: str,
-    fecha_inicio_ciclo: dt.date,
-    fecha_fin_ciclo: dt.date,
-    meta_social: str,
-    id_reglamento: int | None = None,
-):
+def _guardar_reglamento(id_grupo: int, datos: dict, id_reglamento: int | None):
     """
-    Inserta o actualiza el reglamento de un grupo.
+    Inserta o actualiza el reglamento para un grupo.
+    `datos` debe traer TODAS las columnas de la tabla (excepto Id_reglamento).
     """
+    valores = (
+        id_grupo,
+        datos["Nombre_comunidad"],
+        datos["Fecha_formacion"],
+        datos["Reunion_dia"],
+        datos["Reunion_hora"],
+        datos["Reunion_lugar"],
+        datos["Reunion_frecuencia"],
+        datos["Monto_multa"],
+        datos["Ahorro_minimo"],
+        datos["Condiciones_prestamo"],
+        datos["Fecha_inicio_ciclo"],
+        datos["Fecha_fin_ciclo"],
+        datos["Meta_social"],
+        datos["Interes_por_10"],
+        datos["Prestamo_maximo"],
+        datos["Plazo_maximo_meses"],
+    )
+
     if id_reglamento is None:
         # INSERT
         sql = """
-            INSERT INTO reglamento (
+            INSERT INTO reglamento_grupo (
                 Id_grupo,
                 Nombre_comunidad,
                 Fecha_formacion,
@@ -97,30 +107,22 @@ def _guardar_reglamento(
                 Condiciones_prestamo,
                 Fecha_inicio_ciclo,
                 Fecha_fin_ciclo,
-                Meta_social
+                Meta_social,
+                Interes_por_10,
+                Prestamo_maximo,
+                Plazo_maximo_meses
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
-        params = (
-            id_grupo,
-            nombre_comunidad,
-            fecha_formacion,
-            reunion_dia,
-            reunion_hora,
-            reunion_lugar,
-            reunion_frecuencia,
-            monto_multa,
-            ahorro_minimo,
-            texto_condiciones_prestamo,
-            fecha_inicio_ciclo,
-            fecha_fin_ciclo,
-            meta_social,
-        )
+        execute(sql, valores)
     else:
         # UPDATE
         sql = """
-            UPDATE reglamento
+            UPDATE reglamento_grupo
             SET
+                Id_grupo             = %s,
                 Nombre_comunidad     = %s,
                 Fecha_formacion      = %s,
                 Reunion_dia          = %s,
@@ -132,264 +134,291 @@ def _guardar_reglamento(
                 Condiciones_prestamo = %s,
                 Fecha_inicio_ciclo   = %s,
                 Fecha_fin_ciclo      = %s,
-                Meta_social          = %s
+                Meta_social          = %s,
+                Interes_por_10       = %s,
+                Prestamo_maximo      = %s,
+                Plazo_maximo_meses   = %s
             WHERE Id_reglamento = %s
         """
-        params = (
-            nombre_comunidad,
-            fecha_formacion,
-            reunion_dia,
-            reunion_hora,
-            reunion_lugar,
-            reunion_frecuencia,
-            monto_multa,
-            ahorro_minimo,
-            texto_condiciones_prestamo,
-            fecha_inicio_ciclo,
-            fecha_fin_ciclo,
-            meta_social,
-            id_reglamento,
-        )
-
-    execute(sql, params)
+        execute(sql, valores + (id_reglamento,))
 
 
-# --------------------------------------------------------------------
-# Sección: Reglamento
-# --------------------------------------------------------------------
+def _eliminar_reglamento(id_reglamento: int):
+    """
+    Elimina el reglamento de la tabla reglamento_grupo.
+    (Solo afecta esa tabla, no toca grupos ni directivas).
+    """
+    execute("DELETE FROM reglamento_grupo WHERE Id_reglamento = %s", (id_reglamento,))
+
+
+# ============================================================
+# UI – Sección Reglamento
+# ============================================================
+
 def _seccion_reglamento(info_dir: dict):
-    st.subheader("Reglas internas del grupo")
+    st.subheader("Reglamento del grupo")
 
     id_grupo = info_dir["Id_grupo"]
+    nombre_grupo = info_dir["Nombre_grupo"]
 
-    # Traer reglamento si ya existe
+    # Cargar reglamento existente (si hay)
     reglamento = _obtener_reglamento_por_grupo(id_grupo)
 
-    # Fecha de formación por defecto = fecha de creación del grupo
-    fecha_creacion_grupo = info_dir.get("Fecha_creacion_grupo") or dt.date.today()
-    fecha_formacion_default = (
-        reglamento["Fecha_formacion"] if reglamento else fecha_creacion_grupo
+    st.info(
+        f"Estás configurando el reglamento para el grupo "
+        f"**{nombre_grupo}** (Id_grupo = {id_grupo})."
     )
 
-    # Valores iniciales
-    nombre_comunidad = reglamento["Nombre_comunidad"] if reglamento else ""
+    # Fecha de formación = fecha en que se creó el grupo (dato de la tabla grupos)
+    fecha_formacion_def = info_dir.get("Fecha_creacion_grupo")
+    if isinstance(fecha_formacion_def, dt.datetime):
+        fecha_formacion_def = fecha_formacion_def.date()
+    if not fecha_formacion_def:
+        fecha_formacion_def = dt.date.today()
+
+    # Valores por defecto (reglamento existente o vacío)
+    nombre_comunidad = (
+        reglamento["Nombre_comunidad"] if reglamento else ""
+    )
     reunion_dia = reglamento["Reunion_dia"] if reglamento else ""
     reunion_hora = reglamento["Reunion_hora"] if reglamento else ""
     reunion_lugar = reglamento["Reunion_lugar"] if reglamento else ""
-    reunion_frecuencia = reglamento["Reunion_frecuencia"] if reglamento else ""
+    reunion_frec = reglamento["Reunion_frecuencia"] if reglamento else ""
     monto_multa = float(reglamento["Monto_multa"]) if reglamento else 0.0
     ahorro_minimo = float(reglamento["Ahorro_minimo"]) if reglamento else 0.0
-    condiciones_previas = (
+    condiciones_prestamo = (
         reglamento["Condiciones_prestamo"] if reglamento else ""
     )
     fecha_inicio_ciclo = (
-        reglamento["Fecha_inicio_ciclo"] if reglamento else fecha_creacion_grupo
+        reglamento["Fecha_inicio_ciclo"]
+        if reglamento
+        else fecha_formacion_def
     )
     fecha_fin_ciclo = (
         reglamento["Fecha_fin_ciclo"]
         if reglamento
-        else fecha_creacion_grupo.replace(year=fecha_creacion_grupo.year + 1)
+        else fecha_formacion_def + dt.timedelta(days=365)
     )
     meta_social = reglamento["Meta_social"] if reglamento else ""
+    interes_por_10 = float(reglamento["Interes_por_10"]) if reglamento else 0.0
+    prestamo_maximo = float(reglamento["Prestamo_maximo"]) if reglamento else 0.0
+    plazo_maximo_meses = int(reglamento["Plazo_maximo_meses"]) if reglamento else 12
 
-    with st.form("form_reglamento"):
-        st.markdown("**1. Nombre de la comunidad**")
+    # ------------------------------------------------------------------
+    # Formulario
+    # ------------------------------------------------------------------
+    with st.form("form_reglamento_grupo"):
+        st.markdown("### 1. Información general")
+
         nombre_comunidad = st.text_input(
-            "Nombre de la comunidad", value=nombre_comunidad
+            "Nombre de la comunidad",
+            value=nombre_comunidad,
         )
 
-        st.markdown("**2. Fecha en que se formó el grupo de ahorro**")
-        fecha_formacion = st.date_input(
+        st.write("Fecha en que se formó el grupo de ahorro:")
+        st.date_input(
             "Fecha en que se formó el grupo de ahorro",
-            value=fecha_formacion_default,
-            format="YYYY-MM-DD",
+            value=fecha_formacion_def,
+            disabled=True,
+            label_visibility="collapsed",
         )
 
-        st.markdown("**3. Reuniones**")
+        st.markdown("### 2. Reuniones")
+
         col1, col2 = st.columns(2)
         with col1:
-            reunion_dia = st.text_input("Día", value=reunion_dia)
-            reunion_lugar = st.text_input("Lugar", value=reunion_lugar)
+            reunion_dia = st.text_input(
+                "Día de reunión",
+                value=reunion_dia,
+                placeholder="Ejemplo: Lunes",
+            )
         with col2:
-            reunion_hora = st.text_input("Hora", value=reunion_hora)
-            reunion_frecuencia = st.text_input(
-                "Frecuencia de la reunión", value=reunion_frecuencia
+            reunion_hora = st.text_input(
+                "Hora de reunión",
+                value=reunion_hora,
+                placeholder="Ejemplo: 3:00 p.m.",
             )
 
-        st.markdown("**6. Asistencia – Multas**")
+        reunion_lugar = st.text_input(
+            "Lugar de reunión",
+            value=reunion_lugar,
+            placeholder="Ejemplo: Casa comunal",
+        )
+
+        reunion_frec = st.text_input(
+            "Frecuencia de la reunión",
+            value=reunion_frec,
+            placeholder="Ejemplo: Cada semana / cada 15 días",
+        )
+
+        st.markdown("### 3. Multa por inasistencia o retraso")
+
         monto_multa = st.number_input(
-            "Monto de la multa por faltar a una reunión",
+            "Monto de la multa (en dólares)",
             min_value=0.0,
             step=0.25,
             value=monto_multa,
         )
 
-        st.markdown("**7. Ahorros**")
+        st.markdown("### 4. Ahorro mínimo")
+
         ahorro_minimo = st.number_input(
-            "Cantidad mínima de ahorros por reunión",
+            "Cantidad mínima de ahorro por reunión (USD)",
             min_value=0.0,
             step=0.25,
             value=ahorro_minimo,
         )
 
-        st.markdown("**8. Préstamos**")
+        st.markdown("### 5. Préstamos")
+
         interes_por_10 = st.number_input(
-            "Pagamos ___ de interés por cada $10.00 prestados.",
+            "Pagamos ___ de interés por cada $10.00 prestados "
+            "(tasa de interés por 10 dólares)",
             min_value=0.0,
             step=0.1,
-            value=0.0,
-            help=(
-                "Este valor no se guarda en una columna separada, "
-                "se incluye en el texto de Condiciones de préstamo."
-            ),
+            value=interes_por_10,
         )
-        monto_max_prestamo = st.number_input(
-            "Solamente podemos tomar préstamos hasta la cantidad máxima de:",
+
+        prestamo_maximo = st.number_input(
+            "Solamente podemos tomar préstamos hasta la cantidad máxima de",
             min_value=0.0,
-            step=1.0,
-            value=0.0,
+            step=10.0,
+            value=prestamo_maximo,
         )
-        plazo_max_prestamo = st.number_input(
-            "Solamente podemos tomar préstamos por un plazo máximo de (meses):",
+
+        plazo_maximo_meses = st.number_input(
+            "Solamente podemos tomar préstamos por un plazo máximo de (meses)",
             min_value=1,
             step=1,
-            value=12,
+            value=plazo_maximo_meses,
         )
-        condiciones_adicionales = st.text_area(
+
+        condiciones_prestamo = st.text_area(
             "Condiciones adicionales de préstamo",
-            value=condiciones_previas,
-            height=120,
+            value=condiciones_prestamo,
+            placeholder="Otras condiciones para los préstamos...",
         )
 
-        # Armamos el texto completo que irá a la columna Condiciones_prestamo
-        texto_condiciones_prestamo = (
-            f"Pagamos {interes_por_10} de interés por cada $10.00 prestados. "
-            f"Solamente podemos tomar préstamos hasta la cantidad máxima de "
-            f"{monto_max_prestamo}. "
-            f"Solamente podemos tomar préstamos por un plazo máximo de "
-            f"{plazo_max_prestamo} meses. "
-            f"Condiciones adicionales: {condiciones_adicionales}"
-        )
+        st.markdown("### 6. Ciclo y meta social")
 
-        st.markdown("**9. Ciclo**")
-        cols_ciclo = st.columns(2)
-        with cols_ciclo[0]:
+        colc1, colc2 = st.columns(2)
+        with colc1:
             fecha_inicio_ciclo = st.date_input(
-                "Empezamos ciclo el (fecha del primer depósito)",
+                "Fecha de inicio de ciclo",
                 value=fecha_inicio_ciclo,
-                format="YYYY-MM-DD",
             )
-        with cols_ciclo[1]:
+        with colc2:
             fecha_fin_ciclo = st.date_input(
-                "Terminamos el ciclo el (6 o 12 meses)",
+                "Fecha de fin de ciclo",
                 value=fecha_fin_ciclo,
-                format="YYYY-MM-DD",
             )
 
-        st.markdown("**10. Meta social**")
         meta_social = st.text_area(
-            "Meta social del grupo",
+            "Meta social",
             value=meta_social,
-            height=120,
+            placeholder="Escribe la meta social del grupo...",
         )
 
-        guardar = st.form_submit_button(
-            "Guardar reglamento", type="primary"
-        )
+        st.markdown("---")
+        col_guardar, col_eliminar = st.columns(2)
+        with col_guardar:
+            btn_guardar = st.form_submit_button("Guardar reglamento", type="primary")
+        with col_eliminar:
+            btn_eliminar = st.form_submit_button(
+                "Eliminar reglamento", type="secondary"
+            )
 
-    if guardar:
+    # ------------------------------------------------------------------
+    # Acciones del formulario
+    # ------------------------------------------------------------------
+    if btn_guardar:
         if not nombre_comunidad.strip():
             st.warning("Debes escribir el nombre de la comunidad.")
             return
 
+        datos = {
+            "Nombre_comunidad": nombre_comunidad.strip(),
+            "Fecha_formacion": fecha_formacion_def,
+            "Reunion_dia": reunion_dia.strip(),
+            "Reunion_hora": reunion_hora.strip(),
+            "Reunion_lugar": reunion_lugar.strip(),
+            "Reunion_frecuencia": reunion_frec.strip(),
+            "Monto_multa": monto_multa,
+            "Ahorro_minimo": ahorro_minimo,
+            "Condiciones_prestamo": condiciones_prestamo.strip(),
+            "Fecha_inicio_ciclo": fecha_inicio_ciclo,
+            "Fecha_fin_ciclo": fecha_fin_ciclo,
+            "Meta_social": meta_social.strip(),
+            "Interes_por_10": interes_por_10,
+            "Prestamo_maximo": prestamo_maximo,
+            "Plazo_maximo_meses": plazo_maximo_meses,
+        }
+
         _guardar_reglamento(
             id_grupo=id_grupo,
-            nombre_comunidad=nombre_comunidad.strip(),
-            fecha_formacion=fecha_formacion,
-            reunion_dia=reunion_dia.strip(),
-            reunion_hora=reunion_hora.strip(),
-            reunion_lugar=reunion_lugar.strip(),
-            reunion_frecuencia=reunion_frecuencia.strip(),
-            monto_multa=monto_multa,
-            ahorro_minimo=ahorro_minimo,
-            texto_condiciones_prestamo=texto_condiciones_prestamo,
-            fecha_inicio_ciclo=fecha_inicio_ciclo,
-            fecha_fin_ciclo=fecha_fin_ciclo,
-            meta_social=meta_social.strip(),
-            id_reglamento=reglamento["Id_reglamento"] if reglamento else None,
+            datos=datos,
+            id_reglamento=(reglamento["Id_reglamento"] if reglamento else None),
         )
         st.success("Reglamento guardado correctamente.")
-        st.rerun()
+        st.experimental_rerun()
 
-    # Botón para eliminar reglamento
-    st.markdown("---")
-    if reglamento:
-        st.warning("Si eliminas el reglamento deberás volver a registrarlo.")
-        col_del1, col_del2 = st.columns([1, 2])
-        with col_del1:
-            confirmar_del = st.checkbox(
-                "Confirmar eliminación del reglamento"
-            )
-        with col_del2:
-            if st.button("Eliminar reglamento", type="secondary"):
-                if confirmar_del:
-                    execute(
-                        "DELETE FROM reglamento WHERE Id_reglamento = %s",
-                        (reglamento["Id_reglamento"],),
-                    )
-                    st.success("Reglamento eliminado correctamente.")
-                    st.rerun()
-                else:
-                    st.warning(
-                        "Marca la casilla de confirmación antes de eliminar."
-                    )
+    if btn_eliminar:
+        if not reglamento:
+            st.warning("Este grupo todavía no tiene reglamento guardado.")
+        else:
+            _eliminar_reglamento(reglamento["Id_reglamento"])
+            st.success("Reglamento eliminado correctamente.")
+            st.experimental_rerun()
 
 
-# --------------------------------------------------------------------
-# Panel principal de Directiva
-# --------------------------------------------------------------------
+# ============================================================
+# Panel principal de DIRECTIVA
+# ============================================================
+
 @require_auth
 @has_role("DIRECTIVA")
 def directiva_panel():
-    info_dir = _obtener_info_directiva()
+    info_dir = _obtener_info_directiva_actual()
     if not info_dir:
         st.error(
-            "No se encontró información de directiva asociada a este usuario. "
-            "Verifica que el DUI de la directiva exista en la tabla 'directiva'."
+            "No se encontró una directiva asociada a este usuario. "
+            "Verifica que el DUI exista en la tabla 'directiva'."
         )
         return
 
     st.title("Panel de Directiva")
+
     st.caption(
-        f"Directiva: {info_dir['Nombre']} — DUI: {info_dir['DUI']} "
-        f"— Grupo: {info_dir['Grupo']}"
+        f"Directiva: {info_dir['Nombre_directiva']} — DUI: {info_dir['DUI_directiva']} "
+        f"— Grupo: {info_dir['Nombre_grupo']}"
     )
 
-    pestañas = st.tabs(
+    tabs = st.tabs(
         [
             "Reglamento",
             "Miembros",
-            "Ahorros",
+            "Asistencia",
             "Multas",
             "Caja",
+            "Ahorros finales",
             "Cierre de ciclo",
-            "Reportes",
         ]
     )
 
-    with pestañas[0]:
+    # 1. Reglamento (implementado)
+    with tabs[0]:
         _seccion_reglamento(info_dir)
 
-    # Las demás secciones se implementarán más adelante
-    with pestañas[1]:
-        st.info("Sección de miembros se implementará más adelante.")
-    with pestañas[2]:
-        st.info("Sección de ahorros se implementará más adelante.")
-    with pestañas[3]:
-        st.info("Sección de multas se implementará más adelante.")
-    with pestañas[4]:
-        st.info("Sección de caja se implementará más adelante.")
-    with pestañas[5]:
-        st.info("Sección de cierre de ciclo se implementará más adelante.")
-    with pestañas[6]:
-        st.info("Aquí irán los reportes para la directiva.")
+    # 2–7: todavía en construcción, para implementar después
+    with tabs[1]:
+        st.info("Aquí se implementará el registro de miembros del grupo.")
+    with tabs[2]:
+        st.info("Aquí se implementará el registro de asistencia.")
+    with tabs[3]:
+        st.info("Aquí se implementará el manejo de multas.")
+    with tabs[4]:
+        st.info("Aquí se implementará el formulario de caja.")
+    with tabs[5]:
+        st.info("Aquí se implementará el formulario de ahorro final.")
+    with tabs[6]:
+        st.info("Aquí se implementará el formulario de cierre de ciclo.")
