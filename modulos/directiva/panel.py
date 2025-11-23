@@ -8,7 +8,7 @@ from modulos.auth.rbac import has_role, get_user
 
 
 # -------------------------------------------------------
-# Helpers
+# Helpers generales
 # -------------------------------------------------------
 def _obtener_info_directiva_actual() -> dict | None:
     """
@@ -49,6 +49,23 @@ def _obtener_reglamento_por_grupo(id_grupo: int) -> dict | None:
         LIMIT 1
     """
     return fetch_one(sql, (id_grupo,))
+
+
+def _obtener_miembros_grupo(id_grupo: int):
+    """
+    Devuelve los miembros registrados para un grupo.
+    """
+    sql = """
+        SELECT 
+            Id_miembro,
+            Nombre,
+            DUI,
+            Cargo
+        FROM miembros
+        WHERE Id_grupo = %s
+        ORDER BY Cargo, Nombre
+    """
+    return fetch_all(sql, (id_grupo,))
 
 
 # -------------------------------------------------------
@@ -303,7 +320,6 @@ def _seccion_reglamento(info_dir: dict):
             )
             st.success("Reglamento actualizado correctamente.")
 
-        # IMPORTANTE: usar st.rerun (NO experimental_rerun)
         st.rerun()
 
     if eliminar and reglamento:
@@ -316,13 +332,97 @@ def _seccion_reglamento(info_dir: dict):
 
 
 # -------------------------------------------------------
+# Sección: Miembros del grupo
+# -------------------------------------------------------
+def _seccion_miembros(info_dir: dict):
+    st.subheader("Miembros del grupo")
+
+    id_grupo = info_dir["Id_grupo"]
+    nombre_grupo = info_dir["Nombre_grupo"]
+
+    st.caption(f"Grupo: **{nombre_grupo}** — Id_grupo: {id_grupo}")
+    st.write(
+        "En esta sección se registran todas las personas que forman parte del grupo "
+        "(directiva y asociados). Más adelante se usarán para asistencia, multas, "
+        "ahorros, etc."
+    )
+
+    miembros = _obtener_miembros_grupo(id_grupo)
+
+    # -------- Formulario para agregar miembro --------
+    st.markdown("### Agregar nuevo miembro")
+
+    cargos_posibles = [
+        "Presidenta",
+        "Secretaria",
+        "Tesorera",
+        "Vocal",
+        "Comité de crédito",
+        "Comité de educación",
+        "Asociado",
+    ]
+
+    with st.form("form_nuevo_miembro"):
+        nombre_m = st.text_input("Nombre completo del miembro")
+        dui_m = st.text_input("DUI del miembro (con o sin guiones)")
+        cargo_m = st.selectbox("Cargo dentro del grupo", cargos_posibles)
+
+        btn_agregar = st.form_submit_button("Guardar miembro")
+
+    if btn_agregar:
+        if not nombre_m.strip() or not dui_m.strip():
+            st.warning("Debes completar el nombre y el DUI del miembro.")
+        else:
+            execute(
+                """
+                INSERT INTO miembros (Id_grupo, Nombre, DUI, Cargo)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (id_grupo, nombre_m.strip(), dui_m.strip(), cargo_m),
+            )
+            st.success("Miembro registrado correctamente.")
+            st.rerun()
+
+    # -------- Listado y eliminación --------
+    st.markdown("---")
+    st.markdown("### Miembros registrados en el grupo")
+
+    if miembros:
+        st.table(miembros)
+
+        etiquetas = {
+            f"{m['Id_miembro']} - {m['Nombre']} ({m['Cargo']})": m["Id_miembro"]
+            for m in miembros
+        }
+
+        seleccion_eliminar = st.multiselect(
+            "Selecciona miembros a eliminar",
+            list(etiquetas.keys()),
+        )
+
+        if st.button("Eliminar miembros seleccionados", type="secondary"):
+            if not seleccion_eliminar:
+                st.warning("No has seleccionado ningún miembro para eliminar.")
+            else:
+                ids_a_borrar = [etiquetas[e] for e in seleccion_eliminar]
+                for mid in ids_a_borrar:
+                    execute(
+                        "DELETE FROM miembros WHERE Id_miembro = %s",
+                        (mid,),
+                    )
+                st.success("Miembros eliminados correctamente.")
+                st.rerun()
+    else:
+        st.info("Aún no se han registrado miembros para este grupo.")
+
+
+# -------------------------------------------------------
 # Panel principal de Directiva
 # -------------------------------------------------------
 @has_role("DIRECTIVA")
 def directiva_panel():
     """
     Panel principal que ve la directiva cuando inicia sesión.
-    Por ahora solo implementamos la pestaña de Reglamento.
     """
     info_dir = _obtener_info_directiva_actual()
     if not info_dir:
@@ -354,9 +454,11 @@ def directiva_panel():
     with tabs[0]:
         _seccion_reglamento(info_dir)
 
-    # Las demás secciones se irán implementando paso a paso
+    # Miembros
     with tabs[1]:
-        st.info("Aquí se implementará el registro de miembros del grupo.")
+        _seccion_miembros(info_dir)
+
+    # Las demás secciones se irán implementando paso a paso
     with tabs[2]:
         st.info("Aquí se implementará el formulario de asistencia.")
     with tabs[3]:
