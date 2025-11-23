@@ -461,6 +461,14 @@ def _seccion_asistencia(info_dir: dict):
     id_grupo = info_dir["Id_grupo"]
     reuniones = _obtener_reuniones_de_grupo(id_grupo)
     miembros = _obtener_miembros_grupo(id_grupo)
+    reglamento = _obtener_reglamento_por_grupo(id_grupo)
+
+    monto_multa_reglamento = 0.0
+    if reglamento and reglamento.get("Monto_multa") is not None:
+        try:
+            monto_multa_reglamento = float(reglamento["Monto_multa"])
+        except Exception:
+            monto_multa_reglamento = 0.0
 
     # ---- Crear o seleccionar reunión ----
     st.markdown("#### 1. Reunión")
@@ -516,8 +524,10 @@ def _seccion_asistencia(info_dir: dict):
             f"Fecha: **{reunion_actual['Fecha']}**, "
             f"Número: **{reunion_actual['Numero_reunion']}**"
         )
+        fecha_reunion = reunion_actual["Fecha"]
     else:
         st.markdown(f"**Reunión actual:** Id_reunion = {id_reunion_sel}")
+        fecha_reunion = dt.date.today()
 
     # ---- Formulario de asistencia ----
     st.markdown("#### 2. Marcar asistencia de miembros")
@@ -540,7 +550,7 @@ def _seccion_asistencia(info_dir: dict):
     if guardar_asistencia:
         # Guardamos uno por uno (insert / update)
         for mid, presente in nuevos_presentes.items():
-            # ¿Existe registro?
+            # ¿Existe registro de asistencia?
             sql_sel = """
             SELECT Id_asistencia
             FROM asistencia_miembro
@@ -562,7 +572,39 @@ def _seccion_asistencia(info_dir: dict):
                 """
                 execute(sql_ins, (id_reunion_sel, mid, 1 if presente else 0))
 
-        st.success("Asistencia guardada correctamente.")
+            # ---- Multa automática por inasistencia ----
+            if not presente and monto_multa_reglamento > 0:
+                # Verificar si ya existe una multa para ese miembro, grupo y fecha
+                sql_m_sel = """
+                SELECT Id_multa
+                FROM multas_miembro
+                WHERE Id_grupo = %s
+                  AND Id_miembro = %s
+                  AND Fecha_multa = %s
+                LIMIT 1
+                """
+                multa_existente = fetch_one(
+                    sql_m_sel, (id_grupo, mid, fecha_reunion)
+                )
+                if not multa_existente:
+                    sql_m_ins = """
+                    INSERT INTO multas_miembro
+                        (Id_grupo, Id_miembro, Fecha_multa, Monto, Pagada, Fecha_pago)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    """
+                    execute(
+                        sql_m_ins,
+                        (
+                            id_grupo,
+                            mid,
+                            fecha_reunion,
+                            monto_multa_reglamento,
+                            0,
+                            None,
+                        ),
+                    )
+
+        st.success("Asistencia guardada correctamente (y multas automáticas por inasistencia).")
         st.rerun()
 
     # ---- Resumen de la reunión ----
@@ -570,8 +612,7 @@ def _seccion_asistencia(info_dir: dict):
 
     registros = _obtener_asistencia_de_reunion(id_reunion_sel)
     if registros:
-        if reunion_actual:
-            st.write(f"Fecha de la reunión: **{reunion_actual['Fecha']}**")
+        st.write(f"Fecha de la reunión: **{fecha_reunion}**")
         st.table(registros)
         total = len(registros)
         presentes = sum(1 for r in registros if r["Presente"])
@@ -965,7 +1006,20 @@ def _seccion_ahorro_final(info_dir: dict):
         fecha_reu = registros_resumen[0].get("Fecha_reunion")
         if fecha_reu:
             st.write(f"Fecha de la reunión: **{fecha_reu}**")
+
         st.table(registros_resumen)
+
+        # Totales por grupo en la reunión
+        total_ahorro = sum(float(r["Ahorro"] or 0) for r in registros_resumen)
+        total_otras = sum(float(r["Otras_actividades"] or 0) for r in registros_resumen)
+        total_retiros = sum(float(r["Retiros"] or 0) for r in registros_resumen)
+        total_saldo_final = sum(float(r["Saldo_final"] or 0) for r in registros_resumen)
+
+        st.markdown("**Totales del grupo en esta reunión:**")
+        st.write(f"- Total ahorro: **${total_ahorro:.2f}**")
+        st.write(f"- Total otras actividades: **${total_otras:.2f}**")
+        st.write(f"- Total retiros: **${total_retiros:.2f}**")
+        st.write(f"- Total saldo final: **${total_saldo_final:.2f}**")
     else:
         st.info("Todavía no hay ahorros registrados para esta reunión.")
 
