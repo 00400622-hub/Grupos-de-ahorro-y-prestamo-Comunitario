@@ -308,12 +308,12 @@ def _seccion_reglamento(info_dir: dict):
             plazo_max_meses=plazo_max_meses_in,
         )
         st.success("Reglamento guardado correctamente.")
-        st.rerun()
+        st.experimental_rerun()
 
     if eliminar and regl:
         execute("DELETE FROM reglamento_grupo WHERE Id_grupo = %s", (id_grupo,))
         st.success("Reglamento eliminado.")
-        st.rerun()
+        st.experimental_rerun()
 
 
 # =========================================================
@@ -383,7 +383,7 @@ def _seccion_miembros(info_dir: dict):
             if existe_cargo:
                 st.error(
                     f"Ya existe un miembro activo con el cargo {cargo_m}. "
-                    "Primero márcalo como inactivo o cambiale el cargo."
+                    "Primero márcalo como inactivo o cámbiale el cargo."
                 )
                 return
 
@@ -395,15 +395,14 @@ def _seccion_miembros(info_dir: dict):
             (id_grupo, nombre_m.strip(), dui_m.strip(), sexo_m, cargo_m),
         )
         st.success("Miembro agregado correctamente.")
-        st.rerun()
+        st.experimental_rerun()
 
     # Baja lógica de miembro
     st.markdown("---")
     st.markdown("### Dar de baja / cambiar estado de un miembro")
 
-    miembros_activos = [
-        m for m in miembros if m["Activo"] == 1
-    ] if miembros else []
+    miembros = _obtener_miembros_de_grupo(id_grupo)
+    miembros_activos = [m for m in miembros if m["Activo"] == 1] if miembros else []
 
     if not miembros_activos:
         st.info("No hay miembros activos para dar de baja.")
@@ -426,7 +425,7 @@ def _seccion_miembros(info_dir: dict):
             (id_miembro_sel,),
         )
         st.success("Miembro marcado como inactivo.")
-        st.rerun()
+        st.experimental_rerun()
 
 
 # =========================================================
@@ -487,7 +486,7 @@ def _seccion_asistencia(info_dir: dict):
             st.success("Reunión creada correctamente.")
 
         st.session_state["reunion_abierta"] = id_reunion
-        st.rerun()
+        st.experimental_rerun()
 
     # -----------------------------
     # Listar reuniones del grupo
@@ -582,10 +581,10 @@ def _seccion_asistencia(info_dir: dict):
 
         st.success("Asistencia guardada correctamente.")
         st.session_state["reunion_abierta"] = id_reunion_sel
-        st.rerun()
+        st.experimental_rerun()
 
     # -----------------------------
-    # Resumen rápidos
+    # Resumen rápido
     # -----------------------------
     total_presentes = sum(1 for v in estados.values() if v)
     st.metric("Total presentes en esta reunión", total_presentes)
@@ -600,7 +599,7 @@ def _seccion_asistencia(info_dir: dict):
             st.success("Reunión eliminada.")
             if "reunion_abierta" in st.session_state:
                 del st.session_state["reunion_abierta"]
-            st.rerun()
+            st.experimental_rerun()
 
 
 # =========================================================
@@ -625,7 +624,10 @@ def directiva_panel():
             "Reglamento",
             "Miembros",
             "Asistencia",
-            # Después agregaremos: Ahorros, Caja, Multas, Cierre de ciclo, etc.
+            "Multas",
+            "Caja",
+            "Ahorro final",
+            "Cierre de ciclo",
         ]
     )
 
@@ -637,3 +639,16 @@ def directiva_panel():
 
     with tabs[2]:
         _seccion_asistencia(info_dir)
+
+    # Pestañas futuras (placeholders por ahora)
+    with tabs[3]:
+        st.info("Aquí se implementará el módulo de multas.")
+
+    with tabs[4]:
+        st.info("Aquí se implementará el módulo de caja.")
+
+    with tabs[5]:
+        st.info("Aquí se implementará el módulo de ahorro final.")
+
+    with tabs[6]:
+        st.info("Aquí se implementará el módulo de cierre de ciclo.")
