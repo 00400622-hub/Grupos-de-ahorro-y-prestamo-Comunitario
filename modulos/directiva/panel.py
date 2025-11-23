@@ -88,7 +88,6 @@ def _obtener_reuniones_de_grupo(id_grupo: int):
 
 # -------------------------------------------------------
 # Sección: Reglamento de grupo
-# (código igual al que tenías)
 # -------------------------------------------------------
 def _seccion_reglamento(info_dir: dict):
     st.subheader("Reglamento del grupo")
@@ -352,7 +351,6 @@ def _seccion_reglamento(info_dir: dict):
 
 # -------------------------------------------------------
 # Sección: Miembros del grupo
-# (casi igual a la que tenías, solo cuidando Sexo)
 # -------------------------------------------------------
 def _seccion_miembros(info_dir: dict):
     st.subheader("Miembros del grupo")
@@ -439,7 +437,6 @@ def _seccion_miembros(info_dir: dict):
 
 # -------------------------------------------------------
 # Sección: Asistencia
-# (usa reuniones_grupo y asistencia_miembro)
 # -------------------------------------------------------
 def _obtener_asistencia_de_reunion(id_reunion: int):
     sql = """
@@ -709,13 +706,13 @@ def _seccion_multas(info_dir: dict):
 
 # -------------------------------------------------------
 # Sección: Ahorro final
-# Tabla: ahorro_miembro (con campos Id_ahorro, Id_grupo, Id_reunion, Id_miembro,
-# Saldo_inicial, Ahorro, Otras_actividades, Retiros, Saldo_final)
+# Tabla: ahorros_miembros
+# (Id_ahorro, Id_grupo, Id_reunion, Id_miembro,
+#  Saldo_inicial, Ahorro, Otras_actividades, Retiros, Saldo_final)
 # -------------------------------------------------------
 def _obtener_ahorros_de_reunion(id_grupo: int, id_reunion: int):
     """
     Registros de ahorro para un grupo y una reunión específica.
-    IMPORTANTE: aquí se corrige el error de parámetros.
     """
     sql = """
     SELECT 
@@ -728,13 +725,12 @@ def _obtener_ahorros_de_reunion(id_grupo: int, id_reunion: int):
         a.Otras_actividades,
         a.Retiros,
         a.Saldo_final
-    FROM ahorro_miembro a
+    FROM ahorros_miembros a
     JOIN miembros m ON m.Id_miembro = a.Id_miembro
     WHERE a.Id_grupo = %s
       AND a.Id_reunion = %s
     ORDER BY m.Cargo, m.Nombre
     """
-    # ANTES estaba mal: fetch_all(sql, (id_grupo, id_reunion, id_grupo))
     return fetch_all(sql, (id_grupo, id_reunion))
 
 
@@ -744,7 +740,7 @@ def _obtener_ultimo_saldo_miembro(id_grupo: int, id_miembro: int):
     """
     sql = """
     SELECT Saldo_final
-    FROM ahorro_miembro
+    FROM ahorros_miembros
     WHERE Id_grupo = %s AND Id_miembro = %s
     ORDER BY Id_reunion DESC, Id_ahorro DESC
     LIMIT 1
@@ -817,8 +813,7 @@ def _seccion_ahorro_final(info_dir: dict):
             if registro_existente:
                 saldo_inicial = float(registro_existente["Saldo_inicial"])
             else:
-                # Si no hay registro previo para este miembro, usamos:
-                # - último saldo_final registrado
+                # Último saldo_final registrado o ahorro mínimo del reglamento
                 saldo_prev = _obtener_ultimo_saldo_miembro(id_grupo, mid)
                 if saldo_prev > 0:
                     saldo_inicial = saldo_prev
@@ -889,7 +884,7 @@ def _seccion_ahorro_final(info_dir: dict):
             if info_m["existente"]:
                 # UPDATE
                 sql_up = """
-                UPDATE ahorro_miembro
+                UPDATE ahorros_miembros
                 SET Saldo_inicial = %s,
                     Ahorro = %s,
                     Otras_actividades = %s,
@@ -911,7 +906,7 @@ def _seccion_ahorro_final(info_dir: dict):
             else:
                 # INSERT
                 sql_ins = """
-                INSERT INTO ahorro_miembro
+                INSERT INTO ahorros_miembros
                     (Id_grupo, Id_reunion, Id_miembro,
                      Saldo_inicial, Ahorro, Otras_actividades, Retiros, Saldo_final)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
@@ -1006,6 +1001,6 @@ def directiva_panel():
     # Reportes (pendiente)
     with tabs[8]:
         st.info(
-            "Aquí se implementarán los reportes con gr\u00e1ficos de ingresos, egresos "
+            "Aquí se implementarán los reportes con gráficos de ingresos, egresos "
             "y consolidado para el grupo."
         )
