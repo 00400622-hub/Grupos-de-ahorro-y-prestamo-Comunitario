@@ -707,8 +707,6 @@ def _seccion_multas(info_dir: dict):
 # -------------------------------------------------------
 # Sección: Ahorro final
 # Tabla: ahorros_miembros
-# (Id_ahorro, Id_grupo, Id_reunion, Id_miembro,
-#  Saldo_inicial, Ahorro, Otras_actividades, Retiros, Saldo_final)
 # -------------------------------------------------------
 def _obtener_ahorros_de_reunion(id_grupo: int, id_reunion: int):
     """
@@ -813,7 +811,8 @@ def _seccion_ahorro_final(info_dir: dict):
             if registro_existente:
                 saldo_inicial = float(registro_existente["Saldo_inicial"])
             else:
-                # Último saldo_final registrado o ahorro mínimo del reglamento
+                # Si no hay registro previo para este miembro, usamos:
+                # - último saldo_final registrado
                 saldo_prev = _obtener_ultimo_saldo_miembro(id_grupo, mid)
                 if saldo_prev > 0:
                     saldo_inicial = saldo_prev
