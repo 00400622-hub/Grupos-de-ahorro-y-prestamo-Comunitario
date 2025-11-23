@@ -7,9 +7,9 @@ from modulos.config.conexion import fetch_one, fetch_all, execute
 from modulos.auth.rbac import has_role, get_user
 
 
-# -------------------------------------------------------------------
+# -------------------------------------------------------
 # Helpers generales
-# -------------------------------------------------------------------
+# -------------------------------------------------------
 def _obtener_info_directiva_actual() -> dict | None:
     """
     Devuelve la fila de la directiva asociada al usuario en sesión
@@ -24,16 +24,16 @@ def _obtener_info_directiva_actual() -> dict | None:
         return None
 
     sql = """
-        SELECT 
-            d.Id_directiva,
-            d.Nombre,
-            d.DUI,
-            d.Id_grupo,
-            g.Nombre AS Nombre_grupo
-        FROM directiva d
-        JOIN grupos g ON g.Id_grupo = d.Id_grupo
-        WHERE d.DUI = %s
-        LIMIT 1
+    SELECT 
+        d.Id_directiva,
+        d.Nombre,
+        d.DUI,
+        d.Id_grupo,
+        g.Nombre AS Nombre_grupo
+    FROM directiva d
+    JOIN grupos g ON g.Id_grupo = d.Id_grupo
+    WHERE d.DUI = %s
+    LIMIT 1
     """
     return fetch_one(sql, (dui,))
 
@@ -43,10 +43,10 @@ def _obtener_reglamento_por_grupo(id_grupo: int) -> dict | None:
     Recupera el reglamento registrado para un grupo (si existe).
     """
     sql = """
-        SELECT *
-        FROM reglamento_grupo
-        WHERE Id_grupo = %s
-        LIMIT 1
+    SELECT *
+    FROM reglamento_grupo
+    WHERE Id_grupo = %s
+    LIMIT 1
     """
     return fetch_one(sql, (id_grupo,))
 
@@ -56,22 +56,40 @@ def _obtener_miembros_grupo(id_grupo: int):
     Devuelve los miembros registrados para un grupo.
     """
     sql = """
-        SELECT 
-            Id_miembro,
-            Nombre,
-            DUI,
-            Sexo,
-            Cargo
-        FROM miembros
-        WHERE Id_grupo = %s
-        ORDER BY Cargo, Nombre
+    SELECT 
+        Id_miembro,
+        Nombre,
+        DUI,
+        Cargo,
+        Sexo
+    FROM miembros
+    WHERE Id_grupo = %s
+    ORDER BY Cargo, Nombre
     """
     return fetch_all(sql, (id_grupo,))
 
 
-# -------------------------------------------------------------------
+def _obtener_reuniones_de_grupo(id_grupo: int):
+    """
+    Reuniones registradas del grupo (para asistencia y ahorro final).
+    """
+    sql = """
+    SELECT
+        Id_reunion,
+        Fecha,
+        Numero_reunion,
+        Tema
+    FROM reuniones_grupo
+    WHERE Id_grupo = %s
+    ORDER BY Fecha, Numero_reunion
+    """
+    return fetch_all(sql, (id_grupo,))
+
+
+# -------------------------------------------------------
 # Sección: Reglamento de grupo
-# -------------------------------------------------------------------
+# (código igual al que tenías)
+# -------------------------------------------------------
 def _seccion_reglamento(info_dir: dict):
     st.subheader("Reglamento del grupo")
 
@@ -168,8 +186,8 @@ def _seccion_reglamento(info_dir: dict):
             "Solamente podemos tomar préstamos por un plazo máximo de (meses)",
             min_value=1,
             step=1,
-            value=int(reglamento["Plazo_max_meses"])
-            if reglamento and reglamento.get("Plazo_max_meses") is not None
+            value=int(reglamento["Plazo_maximo_meses"])
+            if reglamento and reglamento.get("Plazo_maximo_meses") is not None
             else 6,
         )
 
@@ -234,25 +252,25 @@ def _seccion_reglamento(info_dir: dict):
         if reglamento is None:
             # INSERT
             sql = """
-                INSERT INTO reglamento_grupo (
-                    Id_grupo,
-                    Nombre_comunidad,
-                    Fecha_formacion,
-                    Reunion_dia,
-                    Reunion_hora,
-                    Reunion_lugar,
-                    Reunion_frecuencia,
-                    Monto_multa,
-                    Ahorro_minimo,
-                    Condiciones_prestamo,
-                    Fecha_inicio_ciclo,
-                    Fecha_fin_ciclo,
-                    Meta_social,
-                    Interes_por_10,
-                    Prestamo_maximo,
-                    Plazo_max_meses
-                )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO reglamento_grupo (
+                Id_grupo,
+                Nombre_comunidad,
+                Fecha_formacion,
+                Reunion_dia,
+                Reunion_hora,
+                Reunion_lugar,
+                Reunion_frecuencia,
+                Monto_multa,
+                Ahorro_minimo,
+                Condiciones_prestamo,
+                Fecha_inicio_ciclo,
+                Fecha_fin_ciclo,
+                Meta_social,
+                Interes_por_10,
+                Prestamo_maximo,
+                Plazo_maximo_meses
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
             execute(
                 sql,
@@ -279,24 +297,24 @@ def _seccion_reglamento(info_dir: dict):
         else:
             # UPDATE
             sql = """
-                UPDATE reglamento_grupo
-                SET
-                    Nombre_comunidad = %s,
-                    Fecha_formacion = %s,
-                    Reunion_dia = %s,
-                    Reunion_hora = %s,
-                    Reunion_lugar = %s,
-                    Reunion_frecuencia = %s,
-                    Monto_multa = %s,
-                    Ahorro_minimo = %s,
-                    Condiciones_prestamo = %s,
-                    Fecha_inicio_ciclo = %s,
-                    Fecha_fin_ciclo = %s,
-                    Meta_social = %s,
-                    Interes_por_10 = %s,
-                    Prestamo_maximo = %s,
-                    Plazo_max_meses = %s
-                WHERE Id_reglamento = %s
+            UPDATE reglamento_grupo
+            SET
+                Nombre_comunidad = %s,
+                Fecha_formacion = %s,
+                Reunion_dia = %s,
+                Reunion_hora = %s,
+                Reunion_lugar = %s,
+                Reunion_frecuencia = %s,
+                Monto_multa = %s,
+                Ahorro_minimo = %s,
+                Condiciones_prestamo = %s,
+                Fecha_inicio_ciclo = %s,
+                Fecha_fin_ciclo = %s,
+                Meta_social = %s,
+                Interes_por_10 = %s,
+                Prestamo_maximo = %s,
+                Plazo_maximo_meses = %s
+            WHERE Id_reglamento = %s
             """
             execute(
                 sql,
@@ -332,9 +350,10 @@ def _seccion_reglamento(info_dir: dict):
         st.rerun()
 
 
-# -------------------------------------------------------------------
+# -------------------------------------------------------
 # Sección: Miembros del grupo
-# -------------------------------------------------------------------
+# (casi igual a la que tenías, solo cuidando Sexo)
+# -------------------------------------------------------
 def _seccion_miembros(info_dir: dict):
     st.subheader("Miembros del grupo")
 
@@ -366,8 +385,8 @@ def _seccion_miembros(info_dir: dict):
     with st.form("form_nuevo_miembro"):
         nombre_m = st.text_input("Nombre completo del miembro")
         dui_m = st.text_input("DUI del miembro (con o sin guiones)")
-        sexo_m = st.selectbox("Sexo", ["F", "M", "Otro"])
         cargo_m = st.selectbox("Cargo dentro del grupo", cargos_posibles)
+        sexo_m = st.selectbox("Sexo", ["Femenino", "Masculino", "Otro"])
 
         btn_agregar = st.form_submit_button("Guardar miembro")
 
@@ -377,10 +396,10 @@ def _seccion_miembros(info_dir: dict):
         else:
             execute(
                 """
-                INSERT INTO miembros (Id_grupo, Nombre, DUI, Sexo, Cargo)
+                INSERT INTO miembros (Id_grupo, Nombre, DUI, Cargo, Sexo)
                 VALUES (%s, %s, %s, %s, %s)
                 """,
-                (id_grupo, nombre_m.strip(), dui_m.strip(), sexo_m, cargo_m),
+                (id_grupo, nombre_m.strip(), dui_m.strip(), cargo_m, sexo_m),
             )
             st.success("Miembro registrado correctamente.")
             st.rerun()
@@ -389,7 +408,6 @@ def _seccion_miembros(info_dir: dict):
     st.markdown("---")
     st.markdown("### Miembros registrados en el grupo")
 
-    miembros = _obtener_miembros_grupo(id_grupo)
     if miembros:
         st.table(miembros)
 
@@ -419,198 +437,158 @@ def _seccion_miembros(info_dir: dict):
         st.info("Aún no se han registrado miembros para este grupo.")
 
 
-# -------------------------------------------------------------------
+# -------------------------------------------------------
 # Sección: Asistencia
-# Tablas: reuniones_grupo, asistencia_miembro
-# -------------------------------------------------------------------
+# (usa reuniones_grupo y asistencia_miembro)
+# -------------------------------------------------------
+def _obtener_asistencia_de_reunion(id_reunion: int):
+    sql = """
+    SELECT 
+        a.Id_asistencia,
+        a.Id_miembro,
+        m.Nombre,
+        m.Cargo,
+        m.Sexo,
+        a.Presente
+    FROM asistencia_miembro a
+    JOIN miembros m ON m.Id_miembro = a.Id_miembro
+    WHERE a.Id_reunion = %s
+    ORDER BY m.Cargo, m.Nombre
+    """
+    return fetch_all(sql, (id_reunion,))
+
+
 def _seccion_asistencia(info_dir: dict):
-    st.subheader("Asistencia a reuniones")
+    st.subheader("Asistencia")
 
     id_grupo = info_dir["Id_grupo"]
+    reuniones = _obtener_reuniones_de_grupo(id_grupo)
+    miembros = _obtener_miembros_grupo(id_grupo)
 
-    # -----------------------------
-    # Crear / seleccionar reunión
-    # -----------------------------
-    st.markdown("#### Crear o abrir reunión")
+    # ---- Crear o seleccionar reunión ----
+    st.markdown("#### 1. Reunión")
 
     with st.form("form_reunion"):
-        fecha_reu = st.date_input(
-            "Fecha de la reunión",
-            value=dt.date.today(),
-        )
-        num_reu = st.number_input(
-            "Número de reunión en el ciclo",
-            min_value=1,
-            step=1,
-            value=1,
-        )
-        tema_reu = st.text_input(
-            "Tema u observaciones (opcional)",
-            "",
-        )
-        enviar_reu = st.form_submit_button("Crear / abrir esta reunión")
+        col1, col2 = st.columns(2)
+        with col1:
+            fecha = st.date_input("Fecha de la reunión", value=dt.date.today())
+        with col2:
+            numero = st.number_input("Número de reunión", min_value=1, step=1, value=1)
+        tema = st.text_input("Tema / Comentarios de la reunión", "")
 
-    if enviar_reu:
-        # ¿Ya existe una reunión con esa fecha para este grupo?
-        existente = fetch_one(
-            """
-            SELECT Id_reunion
-            FROM reuniones_grupo
-            WHERE Id_grupo = %s AND Fecha = %s
-            LIMIT 1
-            """,
-            (id_grupo, fecha_reu),
-        )
+        btn_crear_reunion = st.form_submit_button("Crear / usar esta reunión")
+
+    if btn_crear_reunion:
+        # Buscar si ya existe reunión con ese grupo, fecha y número
+        sql_busca = """
+        SELECT Id_reunion
+        FROM reuniones_grupo
+        WHERE Id_grupo = %s AND Fecha = %s AND Numero_reunion = %s
+        LIMIT 1
+        """
+        existente = fetch_one(sql_busca, (id_grupo, fecha, numero))
         if existente:
-            id_reunion = existente["Id_reunion"]
-            st.info(
-                "Ya existía una reunión en esa fecha, se abrió para editar asistencia."
-            )
+            id_reunion_sel = existente["Id_reunion"]
         else:
-            id_reunion = execute(
-                """
-                INSERT INTO reuniones_grupo (Id_grupo, Fecha, Numero_reunion, Tema)
-                VALUES (%s, %s, %s, %s)
-                """,
-                (id_grupo, fecha_reu, num_reu, tema_reu),
-                return_last_id=True,
-            )
-            st.success("Reunión creada correctamente.")
+            sql_ins = """
+            INSERT INTO reuniones_grupo (Fecha, Numero_reunion, Tema, Id_grupo)
+            VALUES (%s, %s, %s, %s)
+            """
+            execute(sql_ins, (fecha, numero, tema.strip(), id_grupo))
+            # Recuperar id
+            existente = fetch_one(sql_busca, (id_grupo, fecha, numero))
+            id_reunion_sel = existente["Id_reunion"]
 
-        st.session_state["reunion_abierta"] = id_reunion
+        st.session_state["reunion_abierta"] = id_reunion_sel
+        st.success(f"Reunión lista (Id_reunion = {id_reunion_sel}).")
         st.rerun()
 
-    # -----------------------------
-    # Listar reuniones del grupo
-    # -----------------------------
-    reuniones = fetch_all(
-        """
-        SELECT Id_reunion, Fecha, Numero_reunion, Tema
-        FROM reuniones_grupo
-        WHERE Id_grupo = %s
-        ORDER BY Fecha DESC, Id_reunion DESC
-        """,
-        (id_grupo,),
-    )
-
-    if not reuniones:
-        st.info("Todavía no hay reuniones registradas para este grupo.")
+    id_reunion_sel = st.session_state.get("reunion_abierta")
+    if not id_reunion_sel:
+        st.info("Primero crea o selecciona una reunión para tomar asistencia.")
         return
 
-    mapa_reu = {
-        f"{r['Fecha']}  (Reunión #{r['Numero_reunion'] or ''} - {r['Tema'] or 'sin tema'})":
-            r["Id_reunion"]
-        for r in reuniones
-    }
+    st.markdown(f"**Reunión actual:** Id_reunion = {id_reunion_sel}")
 
-    id_reunion_default = st.session_state.get("reunion_abierta")
-    claves = list(mapa_reu.keys())
-    valores = list(mapa_reu.values())
+    # ---- Formulario de asistencia ----
+    st.markdown("#### 2. Marcar asistencia de miembros")
 
-    if id_reunion_default and id_reunion_default in valores:
-        idx_default = valores.index(id_reunion_default)
-    else:
-        idx_default = 0
+    # Traemos asistencias ya registradas
+    registros = _obtener_asistencia_de_reunion(id_reunion_sel)
+    presentes_dict = {r["Id_miembro"]: bool(r["Presente"]) for r in registros}
 
-    etiqueta_reu = st.selectbox(
-        "Reunión a trabajar",
-        claves,
-        index=idx_default,
-        key="sel_reunion_asistencia",
-    )
-    id_reunion_sel = mapa_reu[etiqueta_reu]
+    with st.form("form_asistencia_miembros"):
+        nuevos_presentes: dict[int, bool] = {}
 
-    st.markdown("---")
-
-    # -----------------------------
-    # Asistencia de miembros
-    # -----------------------------
-    st.markdown("#### Lista de miembros y asistencia")
-
-    miembros = _obtener_miembros_grupo(id_grupo)
-    if not miembros:
-        st.warning("No hay miembros registrados para este grupo.")
-        return
-
-    # Asistencia ya guardada para esta reunión
-    registros = fetch_all(
-        """
-        SELECT Id_miembro, Presente
-        FROM asistencia_miembro
-        WHERE Id_reunion = %s
-        """,
-        (id_reunion_sel,),
-    )
-    asist_map = {r["Id_miembro"]: bool(r["Presente"]) for r in registros}
-
-    with st.form("form_asistencia"):
-        estados = {}
         for m in miembros:
-            texto = f"{m['Nombre']} — {m['Sexo']} — {m['Cargo']}"
-            estados[m["Id_miembro"]] = st.checkbox(
-                texto,
-                value=asist_map.get(m["Id_miembro"], False),
-                key=f"asis_{id_reunion_sel}_{m['Id_miembro']}",
-            )
+            mid = m["Id_miembro"]
+            etiqueta = f"{m['Nombre']} ({m['Cargo']} - {m['Sexo']})"
+            valor_default = presentes_dict.get(mid, False)
+            nuevos_presentes[mid] = st.checkbox(etiqueta, value=valor_default)
 
-        guardar_asis = st.form_submit_button("Guardar asistencia")
+        guardar_asistencia = st.form_submit_button("Guardar asistencia")
 
-    if guardar_asis:
-        # Borramos la asistencia previa de esa reunión y reinsertamos
-        execute(
-            "DELETE FROM asistencia_miembro WHERE Id_reunion = %s",
-            (id_reunion_sel,),
-        )
-
-        for id_m, presente in estados.items():
-            execute(
+    if guardar_asistencia:
+        # Guardamos uno por uno (insert / update)
+        for mid, presente in nuevos_presentes.items():
+            # ¿Existe registro?
+            sql_sel = """
+            SELECT Id_asistencia
+            FROM asistencia_miembro
+            WHERE Id_reunion = %s AND Id_miembro = %s
+            LIMIT 1
+            """
+            existente = fetch_one(sql_sel, (id_reunion_sel, mid))
+            if existente:
+                sql_up = """
+                UPDATE asistencia_miembro
+                SET Presente = %s
+                WHERE Id_asistencia = %s
                 """
+                execute(sql_up, (1 if presente else 0, existente["Id_asistencia"]))
+            else:
+                sql_ins = """
                 INSERT INTO asistencia_miembro (Id_reunion, Id_miembro, Presente)
                 VALUES (%s, %s, %s)
-                """,
-                (id_reunion_sel, id_m, 1 if presente else 0),
-            )
+                """
+                execute(sql_ins, (id_reunion_sel, mid, 1 if presente else 0))
 
         st.success("Asistencia guardada correctamente.")
-        st.session_state["reunion_abierta"] = id_reunion_sel
         st.rerun()
 
-    # Resumen rápido
-    total_presentes = sum(1 for v in estados.values() if v)
-    st.metric("Total presentes en esta reunión", total_presentes)
+    # ---- Resumen de la reunión ----
+    st.markdown("#### 3. Resumen de asistencia")
 
-    # Botón para eliminar reunión completa (opcional)
-    with st.expander("Opciones avanzadas"):
-        if st.button("Eliminar esta reunión (incluye asistencia)", type="secondary"):
-            execute(
-                "DELETE FROM reuniones_grupo WHERE Id_reunion = %s",
-                (id_reunion_sel,),
-            )
-            st.success("Reunión eliminada.")
-            if "reunion_abierta" in st.session_state:
-                del st.session_state["reunion_abierta"]
-            st.rerun()
+    registros = _obtener_asistencia_de_reunion(id_reunion_sel)
+    if registros:
+        st.table(registros)
+        total = len(registros)
+        presentes = sum(1 for r in registros if r["Presente"])
+        st.write(f"Total de miembros registrados: **{total}**")
+        st.write(f"Asistieron: **{presentes}** — No asistieron: **{total - presentes}**")
+    else:
+        st.info("Todavía no se ha registrado asistencia para esta reunión.")
 
 
-# -------------------------------------------------------------------
+# -------------------------------------------------------
 # Sección: Multas
 # Tabla: multas_miembro
-# -------------------------------------------------------------------
+# -------------------------------------------------------
 def _obtener_multas_de_grupo(id_grupo: int):
     sql = """
-        SELECT 
-            mta.Id_multa,
-            mta.Id_miembro,
-            mi.Nombre AS Nombre_miembro,
-            mi.Cargo,
-            mta.Fecha_multa,
-            mta.Monto,
-            mta.Pagada,
-            mta.Fecha_pago
-        FROM multas_miembro mta
-        JOIN miembros mi ON mi.Id_miembro = mta.Id_miembro
-        WHERE mta.Id_grupo = %s
-        ORDER BY mta.Fecha_multa DESC, mta.Id_multa DESC
+    SELECT 
+        mm.Id_multa,
+        mm.Id_miembro,
+        m.Nombre,
+        m.Cargo,
+        mm.Fecha_multa,
+        mm.Monto,
+        mm.Pagada,
+        mm.Fecha_pago
+    FROM multas_miembro mm
+    JOIN miembros m ON m.Id_miembro = mm.Id_miembro
+    WHERE mm.Id_grupo = %s
+    ORDER BY mm.Fecha_multa DESC, mm.Id_multa DESC
     """
     return fetch_all(sql, (id_grupo,))
 
@@ -620,443 +598,345 @@ def _seccion_multas(info_dir: dict):
 
     id_grupo = info_dir["Id_grupo"]
     miembros = _obtener_miembros_grupo(id_grupo)
+    reglamento = _obtener_reglamento_por_grupo(id_grupo)
+
+    monto_default = 0.0
+    if reglamento and reglamento.get("Monto_multa") is not None:
+        try:
+            monto_default = float(reglamento["Monto_multa"])
+        except Exception:
+            monto_default = 0.0
 
     if not miembros:
-        st.info("Primero registra miembros para poder asignar multas.")
+        st.info("Primero debes registrar miembros para poder asignar multas.")
         return
 
-    # -------- Registrar nueva multa --------
+    # -------- Registrar multa --------
     st.markdown("### Registrar nueva multa")
 
-    # Mapa para el select
-    opciones = {
-        f"{m['Nombre']} ({m['Cargo']})": m["Id_miembro"]
-        for m in miembros
+    opciones_miembro = {
+        f"{m['Nombre']} ({m['Cargo']})": m["Id_miembro"] for m in miembros
     }
 
-    with st.form("form_nueva_multa"):
+    with st.form("form_multas"):
         miembro_label = st.selectbox(
             "Miembro",
-            list(opciones.keys()),
+            list(opciones_miembro.keys()),
         )
-        id_miembro_sel = opciones[miembro_label]
+        id_miembro_sel = opciones_miembro[miembro_label]
 
-        fecha_multa = st.date_input(
-            "Fecha de la multa",
-            value=dt.date.today(),
-        )
+        fecha_multa = st.date_input("Fecha de la multa", value=dt.date.today())
 
         monto = st.number_input(
             "Monto de la multa ($)",
             min_value=0.0,
             step=0.5,
             format="%.2f",
+            value=monto_default,
         )
 
         pagada = st.checkbox("¿Multa pagada?")
         fecha_pago = None
         if pagada:
             fecha_pago = st.date_input(
-                "Fecha de pago",
-                value=dt.date.today(),
+                "Fecha de pago de la multa", value=dt.date.today()
             )
 
-        btn_guardar_multa = st.form_submit_button("Guardar multa")
+        guardar_multa = st.form_submit_button("Guardar multa")
 
-    if btn_guardar_multa:
-        if monto <= 0:
-            st.warning("El monto de la multa debe ser mayor que 0.")
-        else:
-            execute(
-                """
-                INSERT INTO multas_miembro (
-                    Id_grupo, Id_miembro, Fecha_multa, Monto, Pagada, Fecha_pago
-                )
-                VALUES (%s, %s, %s, %s, %s, %s)
-                """,
-                (
-                    id_grupo,
-                    id_miembro_sel,
-                    fecha_multa,
-                    monto,
-                    1 if pagada else 0,
-                    fecha_pago,
-                ),
-            )
-            st.success("Multa registrada correctamente.")
-            st.rerun()
+    if guardar_multa:
+        sql = """
+        INSERT INTO multas_miembro
+            (Id_grupo, Id_miembro, Fecha_multa, Monto, Pagada, Fecha_pago)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        """
+        execute(
+            sql,
+            (
+                id_grupo,
+                id_miembro_sel,
+                fecha_multa,
+                monto,
+                1 if pagada else 0,
+                fecha_pago,
+            ),
+        )
+        st.success("Multa registrada correctamente.")
+        st.rerun()
 
-    # -------- Listado de multas --------
+    # -------- Listado y gestión de multas --------
     st.markdown("---")
     st.markdown("### Multas registradas")
 
     multas = _obtener_multas_de_grupo(id_grupo)
     if not multas:
-        st.info("Aún no se han registrado multas para este grupo.")
+        st.info("Todavía no hay multas registradas para este grupo.")
         return
 
-    # Mostrar en tabla simple
     st.table(multas)
 
-    # -------- Marcar como pagada / eliminar --------
-    st.markdown("### Actualizar / eliminar multa")
+    # Marcar una multa como pagada
+    pendientes = [m for m in multas if not m["Pagada"]]
+    if pendientes:
+        opciones_pend = {
+            f"#{m['Id_multa']} - {m['Nombre']} - ${m['Monto']} ({m['Fecha_multa']})": m[
+                "Id_multa"
+            ]
+            for m in pendientes
+        }
 
-    opciones_multas = {
-        f"{m['Id_multa']} - {m['Nombre_miembro']} - {m['Fecha_multa']} - ${m['Monto']}":
-            m["Id_multa"]
-        for m in multas
-    }
-
-    label_multa = st.selectbox(
-        "Selecciona la multa a actualizar",
-        list(opciones_multas.keys()),
-        key="sel_multa",
-    )
-    id_multa_sel = opciones_multas[label_multa]
-
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Marcar como pagada", type="primary"):
-            hoy = dt.date.today()
-            execute(
-                """
-                UPDATE multas_miembro
-                SET Pagada = 1, Fecha_pago = %s
-                WHERE Id_multa = %s
-                """,
-                (hoy, id_multa_sel),
+        st.markdown("#### Marcar multa como pagada")
+        with st.form("form_marcar_pagada"):
+            label_sel = st.selectbox("Multa pendiente", list(opciones_pend.keys()))
+            id_multa_sel = opciones_pend[label_sel]
+            fecha_pago2 = st.date_input(
+                "Fecha de pago", value=dt.date.today(), key="fecha_pago_multa"
             )
-            st.success("Multa marcada como pagada.")
+            btn_pagar = st.form_submit_button("Marcar como pagada")
+
+        if btn_pagar:
+            sql_up = """
+            UPDATE multas_miembro
+            SET Pagada = 1, Fecha_pago = %s
+            WHERE Id_multa = %s
+            """
+            execute(sql_up, (fecha_pago2, id_multa_sel))
+            st.success("Multa actualizada como pagada.")
             st.rerun()
-    with col2:
-        if st.button("Eliminar multa", type="secondary"):
-            execute(
-                "DELETE FROM multas_miembro WHERE Id_multa = %s",
-                (id_multa_sel,),
-            )
-            st.success("Multa eliminada.")
-            st.rerun()
+    else:
+        st.info("Todas las multas están pagadas actualmente.")
 
 
-# -------------------------------------------------------------------
+# -------------------------------------------------------
 # Sección: Ahorro final
-# Tabla: ahorro_miembro
-# -------------------------------------------------------------------
+# Tabla: ahorro_miembro (con campos Id_ahorro, Id_grupo, Id_reunion, Id_miembro,
+# Saldo_inicial, Ahorro, Otras_actividades, Retiros, Saldo_final)
+# -------------------------------------------------------
 def _obtener_ahorros_de_reunion(id_grupo: int, id_reunion: int):
     """
-    Devuelve, para una reunión, todos los miembros del grupo con su registro
-    de ahorro (si existe) para esa reunión.
+    Registros de ahorro para un grupo y una reunión específica.
+    IMPORTANTE: aquí se corrige el error de parámetros.
     """
     sql = """
-        SELECT
-            a.Id_ahorro,
-            m.Id_miembro,
-            m.Nombre,
-            m.Cargo,
-            a.Saldo_inicial,
-            a.Ahorro,
-            a.Otras_actividades,
-            a.Retiros,
-            a.Saldo_final
-        FROM miembros m
-        LEFT JOIN ahorro_miembro a
-          ON a.Id_miembro = m.Id_miembro
-         AND a.Id_grupo   = %s
-         AND a.Id_reunion = %s
-        WHERE m.Id_grupo = %s
-        ORDER BY m.Nombre
+    SELECT 
+        a.Id_ahorro,
+        a.Id_miembro,
+        m.Nombre,
+        m.Cargo,
+        a.Saldo_inicial,
+        a.Ahorro,
+        a.Otras_actividades,
+        a.Retiros,
+        a.Saldo_final
+    FROM ahorro_miembro a
+    JOIN miembros m ON m.Id_miembro = a.Id_miembro
+    WHERE a.Id_grupo = %s
+      AND a.Id_reunion = %s
+    ORDER BY m.Cargo, m.Nombre
     """
-    return fetch_all(sql, (id_grupo, id_reunion, id_grupo))
+    # ANTES estaba mal: fetch_all(sql, (id_grupo, id_reunion, id_grupo))
+    return fetch_all(sql, (id_grupo, id_reunion))
 
 
-def _calcular_saldo_inicial_miembro(
-    id_grupo: int,
-    id_miembro: int,
-    id_reunion: int,
-    ahorro_minimo_default: float,
-) -> float:
+def _obtener_ultimo_saldo_miembro(id_grupo: int, id_miembro: int):
     """
-    Si ya tiene reuniones anteriores, toma el Saldo_final de la más reciente
-    antes de la reunión actual. Si no, usa el ahorro mínimo del reglamento.
+    Último saldo_final registrado para un miembro del grupo.
     """
-    fila_reu = fetch_one(
-        "SELECT Fecha FROM reuniones_grupo WHERE Id_reunion = %s",
-        (id_reunion,),
-    )
-    if not fila_reu:
-        return ahorro_minimo_default
-
-    fecha_actual = fila_reu["Fecha"]
-
-    fila_prev = fetch_one(
-        """
-        SELECT a.Saldo_final
-        FROM ahorro_miembro a
-        JOIN reuniones_grupo r ON r.Id_reunion = a.Id_reunion
-        WHERE a.Id_grupo = %s
-          AND a.Id_miembro = %s
-          AND r.Fecha < %s
-        ORDER BY r.Fecha DESC, a.Id_ahorro DESC
-        LIMIT 1
-        """,
-        (id_grupo, id_miembro, fecha_actual),
-    )
-
-    if fila_prev and fila_prev["Saldo_final"] is not None:
-        return float(fila_prev["Saldo_final"])
-
-    return ahorro_minimo_default
+    sql = """
+    SELECT Saldo_final
+    FROM ahorro_miembro
+    WHERE Id_grupo = %s AND Id_miembro = %s
+    ORDER BY Id_reunion DESC, Id_ahorro DESC
+    LIMIT 1
+    """
+    fila = fetch_one(sql, (id_grupo, id_miembro))
+    if fila and fila.get("Saldo_final") is not None:
+        try:
+            return float(fila["Saldo_final"])
+        except Exception:
+            return 0.0
+    return 0.0
 
 
 def _seccion_ahorro_final(info_dir: dict):
     st.subheader("Ahorro final")
 
     id_grupo = info_dir["Id_grupo"]
+    reuniones = _obtener_reuniones_de_grupo(id_grupo)
+    miembros = _obtener_miembros_grupo(id_grupo)
+    reglamento = _obtener_reglamento_por_grupo(id_grupo)
 
-    # Necesitamos reuniones existentes
-    reuniones = fetch_all(
-        """
-        SELECT Id_reunion, Fecha, Numero_reunion, Tema
-        FROM reuniones_grupo
-        WHERE Id_grupo = %s
-        ORDER BY Fecha DESC, Id_reunion DESC
-        """,
-        (id_grupo,),
-    )
-    if not reuniones:
-        st.info("Todavía no hay reuniones registradas. Primero registra asistencia.")
+    if not miembros:
+        st.info("Primero debes registrar miembros.")
         return
 
-    # Select de reunión a trabajar
-    mapa_reu = {
-        f"{r['Fecha']}  (Reunión #{r['Numero_reunion'] or ''} - {r['Tema'] or 'sin tema'})":
-            r["Id_reunion"]
+    if not reuniones:
+        st.info("Todavía no hay reuniones registradas. Crea al menos una en Asistencia.")
+        return
+
+    ahorro_minimo = 0.0
+    if reglamento and reglamento.get("Ahorro_minimo") is not None:
+        try:
+            ahorro_minimo = float(reglamento["Ahorro_minimo"])
+        except Exception:
+            ahorro_minimo = 0.0
+
+    opciones_reu = {
+        f"{r['Fecha']} - Reunión {r['Numero_reunion']} ({r['Tema']})": r["Id_reunion"]
         for r in reuniones
     }
 
-    claves = list(mapa_reu.keys())
-    valores = list(mapa_reu.values())
-    id_reunion_default = st.session_state.get("reunion_ahorro")
+    st.markdown("### Seleccionar reunión para registrar ahorros")
 
-    if id_reunion_default and id_reunion_default in valores:
-        idx_default = valores.index(id_reunion_default)
-    else:
-        idx_default = 0
-
-    etiqueta_reu = st.selectbox(
-        "Reunión a trabajar para ahorro",
-        claves,
-        index=idx_default,
-        key="sel_reunion_ahorro",
+    id_reunion_sel = st.selectbox(
+        "Reunión",
+        list(opciones_reu.values()),
+        format_func=lambda rid: next(
+            k for k, v in opciones_reu.items() if v == rid
+        ),
     )
-    id_reunion_sel = mapa_reu[etiqueta_reu]
-    st.session_state["reunion_ahorro"] = id_reunion_sel
 
-    regl = _obtener_reglamento_por_grupo(id_grupo)
-    ahorro_minimo = float(regl["Ahorro_minimo"]) if regl and regl.get("Ahorro_minimo") is not None else 0.0
+    st.markdown(f"Reunión seleccionada: **Id_reunion = {id_reunion_sel}**")
 
+    # Traemos registros existentes de esa reunión
     registros = _obtener_ahorros_de_reunion(id_grupo, id_reunion_sel)
-    if not registros:
-        st.info("No hay miembros registrados para este grupo.")
-        return
+    registros_dict = {r["Id_miembro"]: r for r in registros}
 
-    st.markdown("---")
-    st.markdown("### Registro de ahorro por miembro")
-    st.caption(
-        "El saldo inicial se calcula a partir del saldo final de la reunión anterior. "
-        "Si es la primera reunión, se usa el ahorro mínimo del reglamento."
-    )
+    st.markdown("### Registro de ahorros por miembro")
 
-    filas_guardado: list[tuple] = []
+    with st.form("form_ahorro_final"):
+        datos_form = {}
 
-    with st.form(f"form_ahorro_{id_reunion_sel}"):
-        # Encabezados
-        cols_header = st.columns([3, 1.3, 1.3, 1.3, 1.3, 1.3])
-        cols_header[0].markdown("**Miembro**")
-        cols_header[1].markdown("**Saldo inicial**")
-        cols_header[2].markdown("**Ahorro**")
-        cols_header[3].markdown("**Otras actividades**")
-        cols_header[4].markdown("**Retiros**")
-        cols_header[5].markdown("**Saldo final**")
+        for m in miembros:
+            mid = m["Id_miembro"]
+            st.markdown(f"**{m['Nombre']} ({m['Cargo']})**")
 
-        for reg in registros:
-            id_ahorro = reg["Id_ahorro"]
-            id_m = reg["Id_miembro"]
-            nombre = reg["Nombre"]
-            cargo = reg["Cargo"]
+            registro_existente = registros_dict.get(mid)
 
-            saldo_inicial_exist = reg["Saldo_inicial"]
-            ahorro_exist = reg["Ahorro"]
-            otras_exist = reg["Otras_actividades"]
-            retiros_exist = reg["Retiros"]
-            saldo_final_exist = reg["Saldo_final"]
-
-            if saldo_inicial_exist is not None:
-                saldo_inicial_val = float(saldo_inicial_exist)
+            # Saldo inicial:
+            if registro_existente:
+                saldo_inicial = float(registro_existente["Saldo_inicial"])
             else:
-                saldo_inicial_val = _calcular_saldo_inicial_miembro(
-                    id_grupo=id_grupo,
-                    id_miembro=id_m,
-                    id_reunion=id_reunion_sel,
-                    ahorro_minimo_default=ahorro_minimo,
+                # Si no hay registro previo para este miembro, usamos:
+                # - último saldo_final registrado
+                saldo_prev = _obtener_ultimo_saldo_miembro(id_grupo, mid)
+                if saldo_prev > 0:
+                    saldo_inicial = saldo_prev
+                else:
+                    saldo_inicial = ahorro_minimo
+
+            col1, col2, col3, col4, col5 = st.columns(5)
+
+            with col1:
+                st.write(f"Saldo inicial: **${saldo_inicial:.2f}**")
+
+            with col2:
+                ahorro = st.number_input(
+                    "Ahorro",
+                    key=f"ah_{mid}",
+                    min_value=0.0,
+                    step=0.5,
+                    format="%.2f",
+                    value=float(registro_existente["Ahorro"])
+                    if registro_existente
+                    else 0.0,
                 )
 
-            ahorro_val = float(ahorro_exist) if ahorro_exist is not None else ahorro_minimo
-            otras_val = float(otras_exist) if otras_exist is not None else 0.0
-            retiros_val = float(retiros_exist) if retiros_exist is not None else 0.0
-
-            cols = st.columns([3, 1.3, 1.3, 1.3, 1.3, 1.3])
-            cols[0].markdown(
-                f"**{nombre}**<br/><span style='font-size: 12px;'>{cargo}</span>",
-                unsafe_allow_html=True,
-            )
-
-            saldo_in = cols[1].number_input(
-                "",
-                key=f"salini_{id_reunion_sel}_{id_m}",
-                min_value=0.0,
-                step=0.01,
-                format="%.2f",
-                value=saldo_inicial_val,
-            )
-            ahorro = cols[2].number_input(
-                "",
-                key=f"ahorro_{id_reunion_sel}_{id_m}",
-                min_value=0.0,
-                step=0.01,
-                format="%.2f",
-                value=ahorro_val,
-            )
-            otras = cols[3].number_input(
-                "",
-                key=f"otras_{id_reunion_sel}_{id_m}",
-                min_value=0.0,
-                step=0.01,
-                format="%.2f",
-                value=otras_val,
-            )
-            retiros = cols[4].number_input(
-                "",
-                key=f"retiros_{id_reunion_sel}_{id_m}",
-                min_value=0.0,
-                step=0.01,
-                format="%.2f",
-                value=retiros_val,
-            )
-
-            saldo_final_calc = saldo_in + ahorro + otras - retiros
-
-            # Mostrar saldo final calculado (solo lectura)
-            cols[5].markdown(f"**${saldo_final_calc:,.2f}**")
-
-            filas_guardado.append(
-                (
-                    id_ahorro,
-                    id_m,
-                    saldo_in,
-                    ahorro,
-                    otras,
-                    retiros,
-                    saldo_final_calc,
+            with col3:
+                otras = st.number_input(
+                    "Otras actividades",
+                    key=f"ot_{mid}",
+                    min_value=0.0,
+                    step=0.5,
+                    format="%.2f",
+                    value=float(registro_existente["Otras_actividades"])
+                    if registro_existente
+                    else 0.0,
                 )
-            )
 
-        btn_guardar = st.form_submit_button("Guardar ahorro de esta reunión")
+            with col4:
+                retiros = st.number_input(
+                    "Retiros",
+                    key=f"re_{mid}",
+                    min_value=0.0,
+                    step=0.5,
+                    format="%.2f",
+                    value=float(registro_existente["Retiros"])
+                    if registro_existente
+                    else 0.0,
+                )
 
-    if btn_guardar:
-        for (
-            id_ahorro,
-            id_m,
-            saldo_in,
-            ahorro,
-            otras,
-            retiros,
-            saldo_final_calc,
-        ) in filas_guardado:
-            if id_ahorro:
+            saldo_final = saldo_inicial + ahorro + otras - retiros
+
+            with col5:
+                st.write(f"Saldo final: **${saldo_final:.2f}**")
+
+            datos_form[mid] = {
+                "saldo_inicial": saldo_inicial,
+                "ahorro": ahorro,
+                "otras": otras,
+                "retiros": retiros,
+                "saldo_final": saldo_final,
+                "existente": registro_existente["Id_ahorro"] if registro_existente else None,
+            }
+
+            st.markdown("---")
+
+        guardar_ahorros = st.form_submit_button("Guardar ahorros de la reunión")
+
+    if guardar_ahorros:
+        for mid, info_m in datos_form.items():
+            if info_m["existente"]:
                 # UPDATE
+                sql_up = """
+                UPDATE ahorro_miembro
+                SET Saldo_inicial = %s,
+                    Ahorro = %s,
+                    Otras_actividades = %s,
+                    Retiros = %s,
+                    Saldo_final = %s
+                WHERE Id_ahorro = %s
+                """
                 execute(
-                    """
-                    UPDATE ahorro_miembro
-                    SET Saldo_inicial = %s,
-                        Ahorro = %s,
-                        Otras_actividades = %s,
-                        Retiros = %s,
-                        Saldo_final = %s
-                    WHERE Id_ahorro = %s
-                    """,
+                    sql_up,
                     (
-                        saldo_in,
-                        ahorro,
-                        otras,
-                        retiros,
-                        saldo_final_calc,
-                        id_ahorro,
+                        info_m["saldo_inicial"],
+                        info_m["ahorro"],
+                        info_m["otras"],
+                        info_m["retiros"],
+                        info_m["saldo_final"],
+                        info_m["existente"],
                     ),
                 )
             else:
                 # INSERT
+                sql_ins = """
+                INSERT INTO ahorro_miembro
+                    (Id_grupo, Id_reunion, Id_miembro,
+                     Saldo_inicial, Ahorro, Otras_actividades, Retiros, Saldo_final)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """
                 execute(
-                    """
-                    INSERT INTO ahorro_miembro (
-                        Id_grupo,
-                        Id_reunion,
-                        Id_miembro,
-                        Saldo_inicial,
-                        Ahorro,
-                        Otras_actividades,
-                        Retiros,
-                        Saldo_final
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    """,
+                    sql_ins,
                     (
                         id_grupo,
                         id_reunion_sel,
-                        id_m,
-                        saldo_in,
-                        ahorro,
-                        otras,
-                        retiros,
-                        saldo_final_calc,
+                        mid,
+                        info_m["saldo_inicial"],
+                        info_m["ahorro"],
+                        info_m["otras"],
+                        info_m["retiros"],
+                        info_m["saldo_final"],
                     ),
                 )
 
-        st.success("Ahorro de la reunión guardado correctamente.")
+        st.success("Ahorros guardados correctamente.")
         st.rerun()
 
-    # -------- Resumen de la reunión --------
-    st.markdown("---")
-    st.markdown("### Resumen de ahorro de la reunión")
 
-    resumen = fetch_all(
-        """
-        SELECT
-            m.Nombre,
-            m.Cargo,
-            a.Saldo_inicial,
-            a.Ahorro,
-            a.Otras_actividades,
-            a.Retiros,
-            a.Saldo_final
-        FROM ahorro_miembro a
-        JOIN miembros m ON m.Id_miembro = a.Id_miembro
-        WHERE a.Id_grupo = %s
-          AND a.Id_reunion = %s
-        ORDER BY m.Nombre
-        """,
-        (id_grupo, id_reunion_sel),
-    )
-
-    if resumen:
-        st.table(resumen)
-    else:
-        st.info("Todavía no hay registros de ahorro guardados para esta reunión.")
-
-
-# -------------------------------------------------------------------
+# -------------------------------------------------------
 # Panel principal de Directiva
-# -------------------------------------------------------------------
+# -------------------------------------------------------
 @has_role("DIRECTIVA")
 def directiva_panel():
     """
@@ -1076,6 +956,7 @@ def directiva_panel():
         f"(Id_grupo {info_dir['Id_grupo']})"
     )
 
+    # Orden que acordamos:
     tabs = st.tabs(
         [
             "Reglamento",
@@ -1110,7 +991,7 @@ def directiva_panel():
     with tabs[4]:
         _seccion_ahorro_final(info_dir)
 
-    # Préstamos (pendiente)
+    # Préstamos (pendiente de implementar)
     with tabs[5]:
         st.info("Aquí se implementará el formulario de préstamos.")
 
@@ -1124,4 +1005,7 @@ def directiva_panel():
 
     # Reportes (pendiente)
     with tabs[8]:
-        st.info("Aquí se implementarán los reportes con gráficos de ingresos, egresos y consolidado.")
+        st.info(
+            "Aquí se implementarán los reportes con gr\u00e1ficos de ingresos, egresos "
+            "y consolidado para el grupo."
+        )
