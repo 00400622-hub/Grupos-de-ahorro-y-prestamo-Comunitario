@@ -436,7 +436,7 @@ def _seccion_miembros(info_dir: dict):
 
 
 # -------------------------------------------------------
-# Sección: Asistencia (con multas automáticas)
+# Sección: Asistencia (con multas automáticas + combo de reuniones)
 # -------------------------------------------------------
 def _obtener_asistencia_de_reunion(id_reunion: int):
     sql = """
@@ -471,8 +471,8 @@ def _seccion_asistencia(info_dir: dict):
         except Exception:
             monto_multa_reglamento = 0.0
 
-    # ---- Crear o seleccionar reunión ----
-    st.markdown("#### 1. Reunión")
+    # ---- Crear reunión ----
+    st.markdown("#### 1. Crear o usar reunión")
 
     with st.form("form_reunion"):
         col1, col2 = st.columns(2)
@@ -509,29 +509,54 @@ def _seccion_asistencia(info_dir: dict):
         st.success(f"Reunión lista (Id_reunion = {id_reunion_sel}).")
         st.rerun()
 
-    id_reunion_sel = st.session_state.get("reunion_abierta")
-    if not id_reunion_sel:
-        st.info("Primero crea o selecciona una reunión para tomar asistencia.")
+    # Refrescamos reuniones por si se creó alguna
+    reuniones = _obtener_reuniones_de_grupo(id_grupo)
+
+    if not reuniones:
+        st.info("Todavía no hay reuniones registradas. Crea una reunión arriba.")
         return
 
-    # Buscar info de la reunión actual (para mostrar fecha y número)
-    reunion_actual = next(
-        (r for r in reuniones if r["Id_reunion"] == id_reunion_sel), None
+    # ---- Combo de reuniones existentes ----
+    st.markdown("#### 2. Seleccionar reunión para marcar / revisar asistencia")
+
+    opciones_reu = {
+        f"{r['Fecha']} - Reunión {r['Numero_reunion']} ({r['Tema']})": r
+        for r in reuniones
+    }
+
+    # Definir índice por defecto usando la reunión abierta en sesión, si existe
+    id_reunion_default = st.session_state.get("reunion_abierta")
+    claves = list(opciones_reu.keys())
+    valores = [r["Id_reunion"] for r in opciones_reu.values()]
+
+    if id_reunion_default in valores:
+        idx_default = valores.index(id_reunion_default)
+    else:
+        # Por defecto, la última (reunión más reciente en la lista)
+        idx_default = len(claves) - 1
+
+    etiqueta_reu = st.selectbox(
+        "Reunión a trabajar",
+        claves,
+        index=idx_default,
+        key="sel_reunion_asistencia",
     )
 
-    if reunion_actual:
-        fecha_reunion = reunion_actual["Fecha"]
-        st.markdown(
-            f"**Reunión actual:** Id_reunion = {id_reunion_sel} — "
-            f"Fecha: **{reunion_actual['Fecha']}**, "
-            f"Número: **{reunion_actual['Numero_reunion']}**"
-        )
-    else:
-        fecha_reunion = dt.date.today()
-        st.markdown(f"**Reunión actual:** Id_reunion = {id_reunion_sel}")
+    reunion_sel = opciones_reu[etiqueta_reu]
+    id_reunion_sel = reunion_sel["Id_reunion"]
+    fecha_reunion = reunion_sel["Fecha"]
+
+    # Guardamos la reunión seleccionada en sesión
+    st.session_state["reunion_abierta"] = id_reunion_sel
+
+    st.markdown(
+        f"**Reunión actual:** Id_reunion = {id_reunion_sel} — "
+        f"Fecha: **{reunion_sel['Fecha']}**, "
+        f"Número: **{reunion_sel['Numero_reunion']}**"
+    )
 
     # ---- Formulario de asistencia ----
-    st.markdown("#### 2. Marcar asistencia de miembros")
+    st.markdown("#### 3. Marcar asistencia de miembros")
 
     # Traemos asistencias ya registradas
     registros = _obtener_asistencia_de_reunion(id_reunion_sel)
@@ -611,7 +636,7 @@ def _seccion_asistencia(info_dir: dict):
         st.rerun()
 
     # ---- Resumen de la reunión ----
-    st.markdown("#### 3. Resumen de asistencia")
+    st.markdown("#### 4. Resumen de asistencia")
 
     registros = _obtener_asistencia_de_reunion(id_reunion_sel)
     if registros:
