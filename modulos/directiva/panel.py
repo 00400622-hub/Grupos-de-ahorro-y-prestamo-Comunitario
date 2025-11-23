@@ -176,34 +176,28 @@ def _seccion_reglamento(info_dir: dict):
 
     regl = _obtener_reglamento_por_grupo(id_grupo)
 
-    # valores por defecto
-    nombre_comunidad = (regl["Nombre_comunidad"] if regl else "") or ""
-    fecha_formacion = regl["Fecha_formacion"] if regl else date.today()
-    reunion_dia = (regl["Reunion_dia"] if regl else "") or ""
-    reunion_hora = (regl["Reunion_hora"] if regl else "") or ""
-    reunion_lugar = (regl["Reunion_lugar"] if regl else "") or ""
-    reunion_frecuencia = (regl["Reunion_frecuencia"] if regl else "") or ""
-    monto_multa = float(regl["Monto_multa"]) if regl else 0.0
-    ahorro_minimo = float(regl["Ahorro_minimo"]) if regl else 0.0
-    condiciones_prestamo = (regl["Condiciones_prestamo"] if regl else "") or ""
-    fecha_inicio_ciclo = regl["Fecha_inicio_ciclo"] if regl else date.today()
-    fecha_fin_ciclo = regl["Fecha_fin_ciclo"] if regl else date.today()
-    meta_social = (regl["Meta_social"] if regl else "") or ""
-    interes_por_10 = (
-        float(regl["Interes_por_10"])
-        if regl and regl["Interes_por_10"] is not None
-        else 0.0
-    )
-    prestamo_maximo = (
-        float(regl["Prestamo_maximo"])
-        if regl and regl["Prestamo_maximo"] is not None
-        else 0.0
-    )
-    plazo_max_meses = (
-        int(regl["Plazo_max_meses"])
-        if regl and regl["Plazo_max_meses"] is not None
-        else 0
-    )
+    # valores por defecto (MUY robusto para evitar KeyError)
+    nombre_comunidad = (regl.get("Nombre_comunidad") if regl else "") or ""
+    fecha_formacion = regl.get("Fecha_formacion") if regl else date.today()
+    reunion_dia = (regl.get("Reunion_dia") if regl else "") or ""
+    reunion_hora = (regl.get("Reunion_hora") if regl else "") or ""
+    reunion_lugar = (regl.get("Reunion_lugar") if regl else "") or ""
+    reunion_frecuencia = (regl.get("Reunion_frecuencia") if regl else "") or ""
+    monto_multa = float(regl.get("Monto_multa")) if regl and regl.get("Monto_multa") is not None else 0.0
+    ahorro_minimo = float(regl.get("Ahorro_minimo")) if regl and regl.get("Ahorro_minimo") is not None else 0.0
+    condiciones_prestamo = (regl.get("Condiciones_prestamo") if regl else "") or ""
+    fecha_inicio_ciclo = regl.get("Fecha_inicio_ciclo") if regl else date.today()
+    fecha_fin_ciclo = regl.get("Fecha_fin_ciclo") if regl else date.today()
+    meta_social = (regl.get("Meta_social") if regl else "") or ""
+
+    interes_raw = regl.get("Interes_por_10") if regl else None
+    interes_por_10 = float(interes_raw) if interes_raw is not None else 0.0
+
+    prestamo_raw = regl.get("Prestamo_maximo") if regl else None
+    prestamo_maximo = float(prestamo_raw) if prestamo_raw is not None else 0.0
+
+    plazo_raw = regl.get("Plazo_max_meses") if regl else None
+    plazo_max_meses = int(plazo_raw) if plazo_raw is not None else 0
 
     with st.form("form_reglamento"):
         st.markdown("### 1. Información general")
@@ -308,12 +302,12 @@ def _seccion_reglamento(info_dir: dict):
             plazo_max_meses=plazo_max_meses_in,
         )
         st.success("Reglamento guardado correctamente.")
-        st.experimental_rerun()
+        st.rerun()
 
     if eliminar and regl:
         execute("DELETE FROM reglamento_grupo WHERE Id_grupo = %s", (id_grupo,))
         st.success("Reglamento eliminado.")
-        st.experimental_rerun()
+        st.rerun()
 
 
 # =========================================================
@@ -395,13 +389,12 @@ def _seccion_miembros(info_dir: dict):
             (id_grupo, nombre_m.strip(), dui_m.strip(), sexo_m, cargo_m),
         )
         st.success("Miembro agregado correctamente.")
-        st.experimental_rerun()
+        st.rerun()
 
     # Baja lógica de miembro
     st.markdown("---")
     st.markdown("### Dar de baja / cambiar estado de un miembro")
 
-    miembros = _obtener_miembros_de_grupo(id_grupo)
     miembros_activos = [m for m in miembros if m["Activo"] == 1] if miembros else []
 
     if not miembros_activos:
@@ -425,7 +418,7 @@ def _seccion_miembros(info_dir: dict):
             (id_miembro_sel,),
         )
         st.success("Miembro marcado como inactivo.")
-        st.experimental_rerun()
+        st.rerun()
 
 
 # =========================================================
@@ -486,7 +479,7 @@ def _seccion_asistencia(info_dir: dict):
             st.success("Reunión creada correctamente.")
 
         st.session_state["reunion_abierta"] = id_reunion
-        st.experimental_rerun()
+        st.rerun()
 
     # -----------------------------
     # Listar reuniones del grupo
@@ -581,7 +574,7 @@ def _seccion_asistencia(info_dir: dict):
 
         st.success("Asistencia guardada correctamente.")
         st.session_state["reunion_abierta"] = id_reunion_sel
-        st.experimental_rerun()
+        st.rerun()
 
     # -----------------------------
     # Resumen rápido
@@ -599,7 +592,7 @@ def _seccion_asistencia(info_dir: dict):
             st.success("Reunión eliminada.")
             if "reunion_abierta" in st.session_state:
                 del st.session_state["reunion_abierta"]
-            st.experimental_rerun()
+            st.rerun()
 
 
 # =========================================================
@@ -640,7 +633,7 @@ def directiva_panel():
     with tabs[2]:
         _seccion_asistencia(info_dir)
 
-    # Pestañas futuras (placeholders por ahora)
+    # Pestañas futuras
     with tabs[3]:
         st.info("Aquí se implementará el módulo de multas.")
 
