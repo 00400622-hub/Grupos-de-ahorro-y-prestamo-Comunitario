@@ -60,8 +60,8 @@ def _obtener_miembros_grupo(id_grupo: int):
             Id_miembro,
             Nombre,
             DUI,
-            Sexo,
-            Cargo
+            Cargo,
+            Sexo
         FROM miembros
         WHERE Id_grupo = %s
         ORDER BY Cargo, Nombre
@@ -168,8 +168,8 @@ def _seccion_reglamento(info_dir: dict):
             "Solamente podemos tomar préstamos por un plazo máximo de (meses)",
             min_value=1,
             step=1,
-            value=int(reglamento["Plazo_max_meses"])
-            if reglamento and reglamento.get("Plazo_max_meses") is not None
+            value=int(reglamento["Plazo_maximo_meses"])
+            if reglamento and reglamento.get("Plazo_maximo_meses") is not None
             else 6,
         )
 
@@ -250,7 +250,7 @@ def _seccion_reglamento(info_dir: dict):
                     Meta_social,
                     Interes_por_10,
                     Prestamo_maximo,
-                    Plazo_max_meses
+                    Plazo_maximo_meses
                 )
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
@@ -295,7 +295,7 @@ def _seccion_reglamento(info_dir: dict):
                     Meta_social = %s,
                     Interes_por_10 = %s,
                     Prestamo_maximo = %s,
-                    Plazo_max_meses = %s
+                    Plazo_maximo_meses = %s
                 WHERE Id_reglamento = %s
             """
             execute(
@@ -315,7 +315,7 @@ def _seccion_reglamento(info_dir: dict):
                     meta_social.strip(),
                     interes_por_10,
                     prestamo_maximo,
-                    plazo_max_meses,
+                    plazo_maximo_meses,
                     reglamento["Id_reglamento"],
                 ),
             )
@@ -366,7 +366,7 @@ def _seccion_miembros(info_dir: dict):
     with st.form("form_nuevo_miembro"):
         nombre_m = st.text_input("Nombre completo del miembro")
         dui_m = st.text_input("DUI del miembro (con o sin guiones)")
-        sexo_m = st.selectbox("Sexo", ["F", "M", "Otro"])
+        sexo_m = st.selectbox("Sexo", ["Femenino", "Masculino", "Otro"])
         cargo_m = st.selectbox("Cargo dentro del grupo", cargos_posibles)
 
         btn_agregar = st.form_submit_button("Guardar miembro")
@@ -377,10 +377,10 @@ def _seccion_miembros(info_dir: dict):
         else:
             execute(
                 """
-                INSERT INTO miembros (Id_grupo, Nombre, DUI, Sexo, Cargo)
+                INSERT INTO miembros (Id_grupo, Nombre, DUI, Cargo, Sexo)
                 VALUES (%s, %s, %s, %s, %s)
                 """,
-                (id_grupo, nombre_m.strip(), dui_m.strip(), sexo_m, cargo_m),
+                (id_grupo, nombre_m.strip(), dui_m.strip(), cargo_m, sexo_m),
             )
             st.success("Miembro registrado correctamente.")
             st.rerun()
@@ -390,7 +390,19 @@ def _seccion_miembros(info_dir: dict):
     st.markdown("### Miembros registrados en el grupo")
 
     if miembros:
-        st.table(miembros)
+        # Preparamos una tabla más amigable
+        filas = []
+        for m in miembros:
+            filas.append(
+                {
+                    "Id": m["Id_miembro"],
+                    "Nombre": m["Nombre"],
+                    "DUI": m["DUI"],
+                    "Sexo": m["Sexo"],
+                    "Cargo": m["Cargo"],
+                }
+            )
+        st.table(filas)
 
         etiquetas = {
             f"{m['Id_miembro']} - {m['Nombre']} ({m['Cargo']})": m["Id_miembro"]
@@ -419,7 +431,7 @@ def _seccion_miembros(info_dir: dict):
 
 
 # -------------------------------------------------------
-# Sección: Asistencia
+# Sección: Asistencia a reuniones
 # Tablas: reuniones_grupo, asistencia_miembro
 # -------------------------------------------------------
 def _seccion_asistencia(info_dir: dict):
@@ -430,7 +442,7 @@ def _seccion_asistencia(info_dir: dict):
     # -----------------------------
     # Crear / seleccionar reunión
     # -----------------------------
-    st.markdown("### 1. Crear o abrir reunión")
+    st.markdown("#### Crear o abrir reunión")
 
     with st.form("form_reunion"):
         fecha_reu = st.date_input(
@@ -463,15 +475,15 @@ def _seccion_asistencia(info_dir: dict):
         if existente:
             id_reunion = existente["Id_reunion"]
             st.info(
-                "Ya existía una reunión en esa fecha; se abrió para editar asistencia."
+                "Ya existía una reunión en esa fecha, se abrió para editar asistencia."
             )
         else:
             id_reunion = execute(
                 """
-                INSERT INTO reuniones_grupo (Fecha, Numero_reunion, Tema, Id_grupo)
+                INSERT INTO reuniones_grupo (Id_grupo, Fecha, Numero_reunion, Tema)
                 VALUES (%s, %s, %s, %s)
                 """,
-                (fecha_reu, num_reu, tema_reu, id_grupo),
+                (id_grupo, fecha_reu, num_reu, tema_reu),
                 return_last_id=True,
             )
             st.success("Reunión creada correctamente.")
@@ -496,37 +508,49 @@ def _seccion_asistencia(info_dir: dict):
         st.info("Todavía no hay reuniones registradas para este grupo.")
         return
 
-    st.markdown("### 2. Seleccionar reunión para registrar asistencia")
-
-    opciones_reu = {
-        f"{r['Fecha']} — Reunión #{r['Numero_reunion'] or ''} ({r['Tema'] or 'sin tema'})":
+    mapa_reu = {
+        f"{r['Fecha']}  (Reunión #{r['Numero_reunion'] or ''} - {r['Tema'] or 'sin tema'})":
             r["Id_reunion"]
         for r in reuniones
     }
 
-    valores = list(opciones_reu.values())
-    claves = list(opciones_reu.keys())
-
     id_reunion_default = st.session_state.get("reunion_abierta")
+    claves = list(mapa_reu.keys())
+    valores = list(mapa_reu.values())
+
     if id_reunion_default and id_reunion_default in valores:
         idx_default = valores.index(id_reunion_default)
     else:
         idx_default = 0
 
-    etiqueta_reu = st.selectbox(
-        "Reunión a trabajar",
-        claves,
-        index=idx_default,
-        key="sel_reunion_asistencia",
-    )
-    id_reunion_sel = opciones_reu[etiqueta_reu]
+    col_sel, col_del = st.columns([3, 1])
+
+    with col_sel:
+        etiqueta_reu = st.selectbox(
+            "Reunión a trabajar",
+            claves,
+            index=idx_default,
+            key="sel_reunion_asistencia",
+        )
+    id_reunion_sel = mapa_reu[etiqueta_reu]
+
+    with col_del:
+        if st.button("Eliminar reunión", type="secondary"):
+            execute(
+                "DELETE FROM reuniones_grupo WHERE Id_reunion = %s",
+                (id_reunion_sel,),
+            )
+            st.success("Reunión eliminada (incluye registros de asistencia).")
+            if "reunion_abierta" in st.session_state:
+                del st.session_state["reunion_abierta"]
+            st.rerun()
 
     st.markdown("---")
 
     # -----------------------------
     # Asistencia de miembros
     # -----------------------------
-    st.markdown("### 3. Marcar asistencia de miembros")
+    st.markdown("#### Lista de miembros y asistencia")
 
     miembros = _obtener_miembros_grupo(id_grupo)
     if not miembros:
@@ -576,62 +600,206 @@ def _seccion_asistencia(info_dir: dict):
         st.session_state["reunion_abierta"] = id_reunion_sel
         st.rerun()
 
-    # -------------------------------------------------
-    # 4. Resumen de asistencia de la reunión seleccionada
-    # -------------------------------------------------
-    registros = fetch_all(
-        """
-        SELECT a.Id_miembro, a.Presente
-        FROM asistencia_miembro a
-        WHERE a.Id_reunion = %s
-        """,
-        (id_reunion_sel,),
+    # -----------------------------
+    # Resumen rápido
+    # -----------------------------
+    total_presentes = sum(1 for v in estados.values() if v)
+    total_miembros = len(estados)
+    st.metric(
+        "Total presentes en esta reunión",
+        f"{total_presentes} de {total_miembros}",
     )
-    asist_map = {r["Id_miembro"]: bool(r["Presente"]) for r in registros}
 
-    resumen = []
-    for m in miembros:
-        presente = asist_map.get(m["Id_miembro"], False)
-        resumen.append(
+
+# -------------------------------------------------------
+# Sección: Multas
+# Tabla: multas_miembro
+# -------------------------------------------------------
+def _obtener_multas_grupo(id_grupo: int):
+    sql = """
+        SELECT 
+            mm.Id_multa,
+            mm.Id_miembro,
+            mi.Nombre,
+            mi.Cargo,
+            mi.Sexo,
+            mm.Fecha_multa,
+            mm.Monto,
+            mm.Pagada,
+            mm.Fecha_pago
+        FROM multas_miembro mm
+        JOIN miembros mi ON mi.Id_miembro = mm.Id_miembro
+        WHERE mm.Id_grupo = %s
+        ORDER BY mm.Fecha_multa DESC, mm.Id_multa DESC
+    """
+    return fetch_all(sql, (id_grupo,))
+
+
+def _seccion_multas(info_dir: dict):
+    st.subheader("Multas del grupo")
+
+    id_grupo = info_dir["Id_grupo"]
+
+    miembros = _obtener_miembros_grupo(id_grupo)
+    if not miembros:
+        st.info("Primero debes registrar miembros para poder asignar multas.")
+        return
+
+    # ---------------------------------------------------
+    # Registrar nueva multa
+    # ---------------------------------------------------
+    st.markdown("### Registrar nueva multa")
+
+    opciones_miembro = {
+        f"{m['Nombre']} — {m['Cargo']} ({m['Sexo']})": m["Id_miembro"] for m in miembros
+    }
+
+    with st.form("form_nueva_multa"):
+        miembro_et = st.selectbox(
+            "Miembro",
+            list(opciones_miembro.keys()),
+        )
+        fecha_multa = st.date_input(
+            "Fecha de la multa",
+            value=dt.date.today(),
+        )
+        monto = st.number_input(
+            "Monto de la multa ($)",
+            min_value=0.01,
+            step=0.5,
+            format="%.2f",
+        )
+        pagada_ya = st.checkbox("Marcar como pagada desde ahora")
+        if pagada_ya:
+            fecha_pago = st.date_input(
+                "Fecha de pago",
+                value=dt.date.today(),
+                key="fecha_pago_multa",
+            )
+        else:
+            fecha_pago = None
+
+        btn_guardar_multa = st.form_submit_button("Guardar multa")
+
+    if btn_guardar_multa:
+        id_miembro_sel = opciones_miembro[miembro_et]
+
+        execute(
+            """
+            INSERT INTO multas_miembro
+                (Id_grupo, Id_miembro, Fecha_multa, Monto, Pagada, Fecha_pago)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (
+                id_grupo,
+                id_miembro_sel,
+                fecha_multa,
+                monto,
+                1 if pagada_ya else 0,
+                fecha_pago,
+            ),
+        )
+        st.success("Multa registrada correctamente.")
+        st.rerun()
+
+    st.markdown("---")
+
+    # ---------------------------------------------------
+    # Listado de multas
+    # ---------------------------------------------------
+    multas = _obtener_multas_grupo(id_grupo)
+    if not multas:
+        st.info("Aún no hay multas registradas para este grupo.")
+        return
+
+    filas = []
+    for r in multas:
+        filas.append(
             {
-                "Miembro": m["Nombre"],
-                "Sexo": m["Sexo"],
-                "Cargo": m["Cargo"],
-                "Presente": "Sí" if presente else "No",
+                "Id_multa": r["Id_multa"],
+                "Fecha multa": r["Fecha_multa"],
+                "Miembro": r["Nombre"],
+                "Cargo": r["Cargo"],
+                "Sexo": r["Sexo"],
+                "Monto": float(r["Monto"]),
+                "Estado": "Pagada" if r["Pagada"] else "Pendiente",
+                "Fecha pago": r["Fecha_pago"] or "",
             }
         )
 
-    st.markdown("### 4. Resumen de asistencia")
-    if resumen:
-        st.table(resumen)
+    st.markdown("### Multas registradas")
+    st.table(filas)
+
+    total_pagadas = sum(f["Monto"] for f in filas if f["Estado"] == "Pagada")
+    total_pendientes = sum(f["Monto"] for f in filas if f["Estado"] == "Pendiente")
+
+    col_a, col_b = st.columns(2)
+    col_a.metric("Total multas pagadas", f"${total_pagadas:,.2f}")
+    col_b.metric("Total multas pendientes", f"${total_pendientes:,.2f}")
+
+    # ---------------------------------------------------
+    # Marcar multa como pagada
+    # ---------------------------------------------------
+    st.markdown("### Marcar multa como pagada")
+
+    pendientes = [r for r in multas if not r["Pagada"]]
+    if not pendientes:
+        st.info("No hay multas pendientes de pago.")
     else:
-        st.info("Aún no se ha guardado asistencia para esta reunión.")
+        opciones_pend = {
+            f"#{r['Id_multa']} — {r['Fecha_multa']} — {r['Nombre']} (${r['Monto']})":
+                r["Id_multa"]
+            for r in pendientes
+        }
 
-    total_presentes = sum(1 for v in asist_map.values() if v)
-    st.metric(
-        "Total presentes en esta reunión",
-        f"{total_presentes} de {len(miembros)}",
-    )
+        col_sel, col_btn = st.columns([3, 1])
+        with col_sel:
+            etiqueta_multa = st.selectbox(
+                "Multa pendiente",
+                list(opciones_pend.keys()),
+                key="multa_pendiente_sel",
+            )
+        with col_btn:
+            if st.button("Marcar como pagada", type="primary"):
+                id_multa_sel = opciones_pend[etiqueta_multa]
+                hoy = dt.date.today()
+                execute(
+                    """
+                    UPDATE multas_miembro
+                    SET Pagada = 1, Fecha_pago = %s
+                    WHERE Id_multa = %s
+                    """,
+                    (hoy, id_multa_sel),
+                )
+                st.success("Multa marcada como pagada.")
+                st.rerun()
 
-    # -------------------------------------------------
-    # 5. Opciones avanzadas: eliminar la reunión
-    # -------------------------------------------------
-    with st.expander("Opciones avanzadas"):
-        if st.button(
-            "Eliminar esta reunión (incluye toda la asistencia)",
-            type="secondary",
-        ):
+    # ---------------------------------------------------
+    # Eliminar multa
+    # ---------------------------------------------------
+    st.markdown("### Eliminar multa")
+
+    opciones_todas = {
+        f"#{r['Id_multa']} — {r['Fecha_multa']} — {r['Nombre']} (${r['Monto']}) [{ 'Pagada' if r['Pagada'] else 'Pendiente'}]":
+            r["Id_multa"]
+        for r in multas
+    }
+
+    col_sel2, col_btn2 = st.columns([3, 1])
+    with col_sel2:
+        etiqueta_borrar = st.selectbox(
+            "Selecciona la multa a eliminar",
+            list(opciones_todas.keys()),
+            key="multa_borrar_sel",
+        )
+    with col_btn2:
+        if st.button("Eliminar multa seleccionada", type="secondary"):
+            id_multa_borrar = opciones_todas[etiqueta_borrar]
             execute(
-                "DELETE FROM asistencia_miembro WHERE Id_reunion = %s",
-                (id_reunion_sel,),
+                "DELETE FROM multas_miembro WHERE Id_multa = %s",
+                (id_multa_borrar,),
             )
-            execute(
-                "DELETE FROM reuniones_grupo WHERE Id_reunion = %s",
-                (id_reunion_sel,),
-            )
-            st.success("Reunión y asistencia eliminadas correctamente.")
-            if "reunion_abierta" in st.session_state:
-                del st.session_state["reunion_abierta"]
+            st.success("Multa eliminada.")
             st.rerun()
 
 
@@ -681,9 +849,11 @@ def directiva_panel():
     with tabs[2]:
         _seccion_asistencia(info_dir)
 
-    # Las demás secciones se irán implementando paso a paso
+    # Multas
     with tabs[3]:
-        st.info("Aquí se implementará el manejo de multas.")
+        _seccion_multas(info_dir)
+
+    # Las demás secciones se irán implementando paso a paso
     with tabs[4]:
         st.info("Aquí se implementará el manejo de caja.")
     with tabs[5]:
