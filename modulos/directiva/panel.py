@@ -436,7 +436,7 @@ def _seccion_miembros(info_dir: dict):
 
 
 # -------------------------------------------------------
-# Sección: Asistencia
+# Sección: Asistencia (con multas automáticas)
 # -------------------------------------------------------
 def _obtener_asistencia_de_reunion(id_reunion: int):
     sql = """
@@ -463,6 +463,7 @@ def _seccion_asistencia(info_dir: dict):
     miembros = _obtener_miembros_grupo(id_grupo)
     reglamento = _obtener_reglamento_por_grupo(id_grupo)
 
+    # Monto de multa definido en el reglamento (si existe)
     monto_multa_reglamento = 0.0
     if reglamento and reglamento.get("Monto_multa") is not None:
         try:
@@ -519,15 +520,15 @@ def _seccion_asistencia(info_dir: dict):
     )
 
     if reunion_actual:
+        fecha_reunion = reunion_actual["Fecha"]
         st.markdown(
             f"**Reunión actual:** Id_reunion = {id_reunion_sel} — "
             f"Fecha: **{reunion_actual['Fecha']}**, "
             f"Número: **{reunion_actual['Numero_reunion']}**"
         )
-        fecha_reunion = reunion_actual["Fecha"]
     else:
-        st.markdown(f"**Reunión actual:** Id_reunion = {id_reunion_sel}")
         fecha_reunion = dt.date.today()
+        st.markdown(f"**Reunión actual:** Id_reunion = {id_reunion_sel}")
 
     # ---- Formulario de asistencia ----
     st.markdown("#### 2. Marcar asistencia de miembros")
@@ -548,7 +549,6 @@ def _seccion_asistencia(info_dir: dict):
         guardar_asistencia = st.form_submit_button("Guardar asistencia")
 
     if guardar_asistencia:
-        # Guardamos uno por uno (insert / update)
         for mid, presente in nuevos_presentes.items():
             # ¿Existe registro de asistencia?
             sql_sel = """
@@ -572,9 +572,9 @@ def _seccion_asistencia(info_dir: dict):
                 """
                 execute(sql_ins, (id_reunion_sel, mid, 1 if presente else 0))
 
-            # ---- Multa automática por inasistencia ----
+            # ---------- MULTA AUTOMÁTICA POR INASISTENCIA ----------
             if not presente and monto_multa_reglamento > 0:
-                # Verificar si ya existe una multa para ese miembro, grupo y fecha
+                # Revisar si ya existe una multa para ese miembro en esa fecha
                 sql_m_sel = """
                 SELECT Id_multa
                 FROM multas_miembro
@@ -599,12 +599,15 @@ def _seccion_asistencia(info_dir: dict):
                             mid,
                             fecha_reunion,
                             monto_multa_reglamento,
-                            0,
-                            None,
+                            0,      # Pagada = 0
+                            None,   # Fecha_pago = NULL
                         ),
                     )
 
-        st.success("Asistencia guardada correctamente (y multas automáticas por inasistencia).")
+        st.success(
+            "Asistencia guardada correctamente. "
+            "Se asignaron multas automáticas a quienes no asistieron."
+        )
         st.rerun()
 
     # ---- Resumen de la reunión ----
@@ -624,7 +627,6 @@ def _seccion_asistencia(info_dir: dict):
 
 # -------------------------------------------------------
 # Sección: Multas
-# Tabla: multas_miembro
 # -------------------------------------------------------
 def _obtener_multas_de_grupo(id_grupo: int):
     sql = """
@@ -663,8 +665,8 @@ def _seccion_multas(info_dir: dict):
         st.info("Primero debes registrar miembros para poder asignar multas.")
         return
 
-    # -------- Registrar multa --------
-    st.markdown("### Registrar nueva multa")
+    # -------- Registrar multa (opcional, manual) --------
+    st.markdown("### Registrar nueva multa manualmente")
 
     opciones_miembro = {
         f"{m['Nombre']} ({m['Cargo']})": m["Id_miembro"] for m in miembros
@@ -848,19 +850,7 @@ def _seccion_ahorro_final(info_dir: dict):
         ),
     )
 
-    # Info de la reunión seleccionada
-    reunion_actual = next(
-        (r for r in reuniones if r["Id_reunion"] == id_reunion_sel), None
-    )
-
-    if reunion_actual:
-        st.markdown(
-            f"Reunión seleccionada: **Id_reunion = {id_reunion_sel}** — "
-            f"Fecha: **{reunion_actual['Fecha']}**, "
-            f"Número: **{reunion_actual['Numero_reunion']}**"
-        )
-    else:
-        st.markdown(f"Reunión seleccionada: **Id_reunion = {id_reunion_sel}**")
+    st.markdown(f"Reunión seleccionada: **Id_reunion = {id_reunion_sel}**")
 
     # Traemos registros existentes de esa reunión
     registros = _obtener_ahorros_de_reunion(id_grupo, id_reunion_sel)
