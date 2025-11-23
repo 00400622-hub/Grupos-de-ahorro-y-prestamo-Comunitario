@@ -78,21 +78,21 @@ def _guardar_reglamento(
         sql = """
             UPDATE reglamento_grupo
             SET
-                Nombre_comunidad   = %s,
-                Fecha_formacion    = %s,
-                Reunion_dia        = %s,
-                Reunion_hora       = %s,
-                Reunion_lugar      = %s,
-                Reunion_frecuencia = %s,
-                Monto_multa        = %s,
-                Ahorro_minimo      = %s,
+                Nombre_comunidad     = %s,
+                Fecha_formacion      = %s,
+                Reunion_dia          = %s,
+                Reunion_hora         = %s,
+                Reunion_lugar        = %s,
+                Reunion_frecuencia   = %s,
+                Monto_multa          = %s,
+                Ahorro_minimo        = %s,
                 Condiciones_prestamo = %s,
-                Fecha_inicio_ciclo = %s,
-                Fecha_fin_ciclo    = %s,
-                Meta_social        = %s,
-                Interes_por_10     = %s,
-                Prestamo_maximo    = %s,
-                Plazo_max_meses    = %s
+                Fecha_inicio_ciclo   = %s,
+                Fecha_fin_ciclo      = %s,
+                Meta_social          = %s,
+                Interes_por_10       = %s,
+                Prestamo_maximo      = %s,
+                Plazo_max_meses      = %s
             WHERE Id_grupo = %s
         """
         execute(
@@ -176,28 +176,31 @@ def _seccion_reglamento(info_dir: dict):
 
     regl = _obtener_reglamento_por_grupo(id_grupo)
 
-    # valores por defecto (MUY robusto para evitar KeyError)
-    nombre_comunidad = (regl.get("Nombre_comunidad") if regl else "") or ""
-    fecha_formacion = regl.get("Fecha_formacion") if regl else date.today()
-    reunion_dia = (regl.get("Reunion_dia") if regl else "") or ""
-    reunion_hora = (regl.get("Reunion_hora") if regl else "") or ""
-    reunion_lugar = (regl.get("Reunion_lugar") if regl else "") or ""
-    reunion_frecuencia = (regl.get("Reunion_frecuencia") if regl else "") or ""
-    monto_multa = float(regl.get("Monto_multa")) if regl and regl.get("Monto_multa") is not None else 0.0
-    ahorro_minimo = float(regl.get("Ahorro_minimo")) if regl and regl.get("Ahorro_minimo") is not None else 0.0
-    condiciones_prestamo = (regl.get("Condiciones_prestamo") if regl else "") or ""
-    fecha_inicio_ciclo = regl.get("Fecha_inicio_ciclo") if regl else date.today()
-    fecha_fin_ciclo = regl.get("Fecha_fin_ciclo") if regl else date.today()
-    meta_social = (regl.get("Meta_social") if regl else "") or ""
+    # valores por defecto (seguros aunque falte alguna columna)
+    nombre_comunidad = (regl["Nombre_comunidad"] if regl else "") or ""
+    fecha_formacion = regl["Fecha_formacion"] if regl else date.today()
+    reunion_dia = (regl["Reunion_dia"] if regl else "") or ""
+    reunion_hora = (regl["Reunion_hora"] if regl else "") or ""
+    reunion_lugar = (regl["Reunion_lugar"] if regl else "") or ""
+    reunion_frecuencia = (regl["Reunion_frecuencia"] if regl else "") or ""
+    monto_multa = float(regl["Monto_multa"]) if regl else 0.0
+    ahorro_minimo = float(regl["Ahorro_minimo"]) if regl else 0.0
+    condiciones_prestamo = (regl["Condiciones_prestamo"] if regl else "") or ""
+    fecha_inicio_ciclo = regl["Fecha_inicio_ciclo"] if regl else date.today()
+    fecha_fin_ciclo = regl["Fecha_fin_ciclo"] if regl else date.today()
+    meta_social = (regl["Meta_social"] if regl else "") or ""
 
-    interes_raw = regl.get("Interes_por_10") if regl else None
-    interes_por_10 = float(interes_raw) if interes_raw is not None else 0.0
+    interes_por_10 = 0.0
+    if regl and "Interes_por_10" in regl and regl["Interes_por_10"] is not None:
+        interes_por_10 = float(regl["Interes_por_10"])
 
-    prestamo_raw = regl.get("Prestamo_maximo") if regl else None
-    prestamo_maximo = float(prestamo_raw) if prestamo_raw is not None else 0.0
+    prestamo_maximo = 0.0
+    if regl and "Prestamo_maximo" in regl and regl["Prestamo_maximo"] is not None:
+        prestamo_maximo = float(regl["Prestamo_maximo"])
 
-    plazo_raw = regl.get("Plazo_max_meses") if regl else None
-    plazo_max_meses = int(plazo_raw) if plazo_raw is not None else 0
+    plazo_max_meses = 0
+    if regl and "Plazo_max_meses" in regl and regl["Plazo_max_meses"] is not None:
+        plazo_max_meses = int(regl["Plazo_max_meses"])
 
     with st.form("form_reglamento"):
         st.markdown("### 1. Información general")
@@ -317,7 +320,7 @@ def _seccion_reglamento(info_dir: dict):
 
 def _obtener_miembros_de_grupo(id_grupo: int):
     sql = """
-        SELECT Id_miembro, Nombre, DUI, Sexo, Cargo, Activo
+        SELECT Id_miembro, Nombre, DUI, Cargo, Sexo
         FROM miembros
         WHERE Id_grupo = %s
         ORDER BY Nombre
@@ -361,7 +364,7 @@ def _seccion_miembros(info_dir: dict):
             st.warning("Debes indicar el nombre del miembro.")
             return
 
-        # si el cargo no es ASOCIADO, verificar que no exista otro con ese cargo
+        # si el cargo no es ASOCIADO, verificar que no exista otro con ese cargo en el grupo
         if cargo_m != "ASOCIADO":
             existe_cargo = fetch_one(
                 """
@@ -369,55 +372,53 @@ def _seccion_miembros(info_dir: dict):
                 FROM miembros
                 WHERE Id_grupo = %s
                   AND Cargo = %s
-                  AND Activo = 1
                 LIMIT 1
                 """,
                 (id_grupo, cargo_m),
             )
             if existe_cargo:
                 st.error(
-                    f"Ya existe un miembro activo con el cargo {cargo_m}. "
-                    "Primero márcalo como inactivo o cámbiale el cargo."
+                    f"Ya existe un miembro con el cargo {cargo_m} en este grupo. "
+                    "Si deseas cambiarlo, primero elimina al miembro actual."
                 )
                 return
 
         execute(
             """
-            INSERT INTO miembros (Id_grupo, Nombre, DUI, Sexo, Cargo, Activo)
-            VALUES (%s, %s, %s, %s, %s, 1)
+            INSERT INTO miembros (Id_grupo, Nombre, DUI, Cargo, Sexo)
+            VALUES (%s, %s, %s, %s, %s)
             """,
-            (id_grupo, nombre_m.strip(), dui_m.strip(), sexo_m, cargo_m),
+            (id_grupo, nombre_m.strip(), dui_m.strip(), cargo_m, sexo_m),
         )
         st.success("Miembro agregado correctamente.")
         st.rerun()
 
-    # Baja lógica de miembro
+    # Eliminación de miembro
     st.markdown("---")
-    st.markdown("### Dar de baja / cambiar estado de un miembro")
+    st.markdown("### Eliminar un miembro")
 
-    miembros_activos = [m for m in miembros if m["Activo"] == 1] if miembros else []
-
-    if not miembros_activos:
-        st.info("No hay miembros activos para dar de baja.")
+    if not miembros:
+        st.info("No hay miembros para eliminar.")
         return
 
     opciones = {
         f"{m['Nombre']} — {m['Cargo']}": m["Id_miembro"]
-        for m in miembros_activos
+        for m in miembros
     }
     etiqueta_sel = st.selectbox(
-        "Selecciona el miembro a dar de baja",
+        "Selecciona el miembro a eliminar",
         list(opciones.keys()),
-        key="miembro_baja",
+        key="miembro_eliminar",
     )
     id_miembro_sel = opciones[etiqueta_sel]
 
-    if st.button("Marcar como inactivo", type="secondary"):
+    if st.button("Eliminar miembro seleccionado", type="secondary"):
+        # Si tienes FK con ON DELETE CASCADE, también se eliminará su asistencia, etc.
         execute(
-            "UPDATE miembros SET Activo = 0 WHERE Id_miembro = %s",
+            "DELETE FROM miembros WHERE Id_miembro = %s",
             (id_miembro_sel,),
         )
-        st.success("Miembro marcado como inactivo.")
+        st.success("Miembro eliminado correctamente.")
         st.rerun()
 
 
@@ -533,6 +534,8 @@ def _seccion_asistencia(info_dir: dict):
         st.warning("No hay miembros registrados para este grupo.")
         return
 
+    miembros_por_id = {m["Id_miembro"]: m for m in miembros}
+
     # Asistencia ya guardada para esta reunión
     registros = fetch_all(
         """
@@ -541,6 +544,7 @@ def _seccion_asistencia(info_dir: dict):
         WHERE Id_reunion = %s
         """,
         (id_reunion_sel,),
+
     )
     asist_map = {r["Id_miembro"]: bool(r["Presente"]) for r in registros}
 
@@ -564,12 +568,13 @@ def _seccion_asistencia(info_dir: dict):
         )
 
         for id_m, presente in estados.items():
+            sexo = miembros_por_id[id_m]["Sexo"]
             execute(
                 """
-                INSERT INTO asistencia_miembro (Id_reunion, Id_miembro, Presente)
-                VALUES (%s, %s, %s)
+                INSERT INTO asistencia_miembro (Id_reunion, Id_miembro, Presente, Sexo)
+                VALUES (%s, %s, %s, %s)
                 """,
-                (id_reunion_sel, id_m, 1 if presente else 0),
+                (id_reunion_sel, id_m, 1 if presente else 0, sexo),
             )
 
         st.success("Asistencia guardada correctamente.")
@@ -617,10 +622,7 @@ def directiva_panel():
             "Reglamento",
             "Miembros",
             "Asistencia",
-            "Multas",
-            "Caja",
-            "Ahorro final",
-            "Cierre de ciclo",
+            # Más adelante: Multas, Caja, Ahorro final, Cierre de ciclo...
         ]
     )
 
@@ -632,16 +634,3 @@ def directiva_panel():
 
     with tabs[2]:
         _seccion_asistencia(info_dir)
-
-    # Pestañas futuras
-    with tabs[3]:
-        st.info("Aquí se implementará el módulo de multas.")
-
-    with tabs[4]:
-        st.info("Aquí se implementará el módulo de caja.")
-
-    with tabs[5]:
-        st.info("Aquí se implementará el módulo de ahorro final.")
-
-    with tabs[6]:
-        st.info("Aquí se implementará el módulo de cierre de ciclo.")
