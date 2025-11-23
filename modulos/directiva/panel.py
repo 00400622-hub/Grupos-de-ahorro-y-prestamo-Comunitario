@@ -10,6 +10,8 @@ from modulos.auth.rbac import has_role, get_user
 # -------------------------------------------------------
 # Helpers generales
 # -------------------------------------------------------
+
+
 def _obtener_info_directiva_actual() -> dict | None:
     """
     Devuelve la fila de la directiva asociada al usuario en sesión
@@ -69,9 +71,38 @@ def _obtener_miembros_grupo(id_grupo: int):
     return fetch_all(sql, (id_grupo,))
 
 
+def _obtener_reuniones_grupo(id_grupo: int):
+    """
+    Devuelve las reuniones ya registradas para un grupo.
+    """
+    sql = """
+        SELECT Id_reunion, Fecha, Numero_reunion, Tema
+        FROM reuniones_grupo
+        WHERE Id_grupo = %s
+        ORDER BY Fecha DESC, Id_reunion DESC
+    """
+    return fetch_all(sql, (id_grupo,))
+
+
+def _obtener_asistencia_reunion(id_reunion: int) -> dict:
+    """
+    Devuelve un diccionario {Id_miembro: True/False} con la asistencia
+    registrada para una reunión dada.
+    """
+    sql = """
+        SELECT Id_miembro, Presente
+        FROM asistencia_miembro
+        WHERE Id_reunion = %s
+    """
+    filas = fetch_all(sql, (id_reunion,))
+    return {f["Id_miembro"]: bool(f["Presente"]) for f in filas}
+
+
 # -------------------------------------------------------
 # Sección: Reglamento de grupo
 # -------------------------------------------------------
+
+
 def _seccion_reglamento(info_dir: dict):
     st.subheader("Reglamento del grupo")
 
@@ -168,8 +199,8 @@ def _seccion_reglamento(info_dir: dict):
             "Solamente podemos tomar préstamos por un plazo máximo de (meses)",
             min_value=1,
             step=1,
-            value=int(reglamento["Plazo_maximo_meses"])
-            if reglamento and reglamento.get("Plazo_maximo_meses") is not None
+            value=int(reglamento["Plazo_max_meses"])
+            if reglamento and reglamento.get("Plazo_max_meses") is not None
             else 6,
         )
 
@@ -201,10 +232,9 @@ def _seccion_reglamento(info_dir: dict):
             )
         else:
             # Por defecto un año después
-            hoy = dt.date.today()
             fecha_fin_ciclo = st.date_input(
                 "Fecha estimada de cierre del ciclo",
-                value=hoy.replace(year=hoy.year + 1),
+                value=dt.date.today().replace(year=dt.date.today().year + 1),
             )
 
         meta_social = st.text_area(
@@ -251,7 +281,7 @@ def _seccion_reglamento(info_dir: dict):
                     Meta_social,
                     Interes_por_10,
                     Prestamo_maximo,
-                    Plazo_maximo_meses
+                    Plazo_max_meses
                 )
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
@@ -296,7 +326,7 @@ def _seccion_reglamento(info_dir: dict):
                     Meta_social = %s,
                     Interes_por_10 = %s,
                     Prestamo_maximo = %s,
-                    Plazo_maximo_meses = %s
+                    Plazo_max_meses = %s
                 WHERE Id_reglamento = %s
             """
             execute(
@@ -336,6 +366,8 @@ def _seccion_reglamento(info_dir: dict):
 # -------------------------------------------------------
 # Sección: Miembros del grupo
 # -------------------------------------------------------
+
+
 def _seccion_miembros(info_dir: dict):
     st.subheader("Miembros del grupo")
 
@@ -367,8 +399,8 @@ def _seccion_miembros(info_dir: dict):
     with st.form("form_nuevo_miembro"):
         nombre_m = st.text_input("Nombre completo del miembro")
         dui_m = st.text_input("DUI del miembro (con o sin guiones)")
-        cargo_m = st.selectbox("Cargo dentro del grupo", cargos_posibles)
         sexo_m = st.selectbox("Sexo", ["Femenino", "Masculino", "Otro"])
+        cargo_m = st.selectbox("Cargo dentro del grupo", cargos_posibles)
 
         btn_agregar = st.form_submit_button("Guardar miembro")
 
@@ -390,15 +422,11 @@ def _seccion_miembros(info_dir: dict):
     st.markdown("---")
     st.markdown("### Miembros registrados en el grupo")
 
-    miembros = _obtener_miembros_grupo(id_grupo)  # refrescamos
-
     if miembros:
         st.table(miembros)
 
         etiquetas = {
-            f"{m['Id_miembro']} - {m['Nombre']} ({m['Cargo']} / {m['Sexo']})": m[
-                "Id_miembro"
-            ]
+            f"{m['Id_miembro']} - {m['Nombre']} ({m['Cargo']})": m["Id_miembro"]
             for m in miembros
         }
 
@@ -426,22 +454,19 @@ def _seccion_miembros(info_dir: dict):
 # -------------------------------------------------------
 # Sección: Asistencia
 # -------------------------------------------------------
+
+
 def _seccion_asistencia(info_dir: dict):
     st.subheader("Asistencia a reuniones")
 
     id_grupo = info_dir["Id_grupo"]
 
-    # -----------------------------
-    # 1. Crear o seleccionar reunión
-    # -----------------------------
-    st.markdown("### Datos de la reunión")
+    # ---------- Crear / usar reunión ----------
+    st.markdown("### Crear o abrir reunión")
 
     with st.form("form_crear_reunion"):
-        fecha_reu = st.date_input(
-            "Fecha de la reunión",
-            value=dt.date.today(),
-        )
-        numero_reu = st.number_input(
+        fecha = st.date_input("Fecha de la reunión", value=dt.date.today())
+        numero = st.number_input(
             "Número de reunión en el ciclo",
             min_value=1,
             step=1,
@@ -449,13 +474,13 @@ def _seccion_asistencia(info_dir: dict):
         )
         tema = st.text_input(
             "Tema u observaciones (opcional)",
-            "",
+            value="",
         )
 
-        btn_abrir = st.form_submit_button("Crear / abrir reunión")
+        btn_crear = st.form_submit_button("Crear / usar esta reunión")
 
-    if btn_abrir:
-        # Buscamos si ya existe una reunión en esa fecha para el grupo
+    if btn_crear:
+        # ¿Existe ya una reunión con esa fecha?
         existente = fetch_one(
             """
             SELECT Id_reunion
@@ -463,18 +488,22 @@ def _seccion_asistencia(info_dir: dict):
             WHERE Id_grupo = %s AND Fecha = %s
             LIMIT 1
             """,
-            (id_grupo, fecha_reu),
+            (id_grupo, fecha),
         )
+
         if existente:
             id_reunion = existente["Id_reunion"]
-            st.info("Ya existía una reunión en esa fecha; se abrió para editar asistencia.")
+            st.info(
+                "Ya existía una reunión en esa fecha. "
+                "Se abrió para editar la asistencia."
+            )
         else:
             id_reunion = execute(
                 """
                 INSERT INTO reuniones_grupo (Id_grupo, Fecha, Numero_reunion, Tema)
                 VALUES (%s, %s, %s, %s)
                 """,
-                (id_grupo, fecha_reu, numero_reu, tema),
+                (id_grupo, fecha, numero, tema),
                 return_last_id=True,
             )
             st.success("Reunión creada correctamente.")
@@ -482,89 +511,67 @@ def _seccion_asistencia(info_dir: dict):
         st.session_state["reunion_abierta"] = id_reunion
         st.rerun()
 
-    # -----------------------------
-    # 2. Listar reuniones del grupo
-    # -----------------------------
-    reuniones = fetch_all(
-        """
-        SELECT Id_reunion, Fecha, Numero_reunion, Tema
-        FROM reuniones_grupo
-        WHERE Id_grupo = %s
-        ORDER BY Fecha DESC, Id_reunion DESC
-        """,
-        (id_grupo,),
-    )
+    # ---------- Listado de reuniones ----------
+    reuniones = _obtener_reuniones_grupo(id_grupo)
 
     if not reuniones:
-        st.info("Aún no hay reuniones registradas para este grupo.")
+        st.info("Todavía no hay reuniones registradas para este grupo.")
         return
 
-    mapa_reu = {
-        f"{r['Fecha']}  (Reunión #{r['Numero_reunion'] or ''} - {r['Tema'] or 'sin tema'})":
-            r["Id_reunion"]
+    reunion_abierta = st.session_state.get("reunion_abierta")
+
+    opciones = {
+        f"{r['Fecha']}  (#{r['Numero_reunion']} — {r['Tema'] or 'sin tema'})": r[
+            "Id_reunion"
+        ]
         for r in reuniones
     }
+    etiquetas = list(opciones.keys())
+    valores = list(opciones.values())
 
-    id_reunion_default = st.session_state.get("reunion_abierta")
-    claves = list(mapa_reu.keys())
-    valores = list(mapa_reu.values())
-
-    if id_reunion_default and id_reunion_default in valores:
-        idx_default = valores.index(id_reunion_default)
+    if reunion_abierta in valores:
+        idx_default = valores.index(reunion_abierta)
     else:
         idx_default = 0
 
-    etiqueta_reu = st.selectbox(
+    etiqueta_sel = st.selectbox(
         "Reunión a trabajar",
-        claves,
+        etiquetas,
         index=idx_default,
         key="sel_reunion_asistencia",
     )
-    id_reunion_sel = mapa_reu[etiqueta_reu]
+    id_reunion_sel = opciones[etiqueta_sel]
 
     st.markdown("---")
-
-    # -----------------------------
-    # 3. Lista de miembros y asistencia
-    # -----------------------------
     st.markdown("### Lista de miembros y asistencia")
 
     miembros = _obtener_miembros_grupo(id_grupo)
     if not miembros:
-        st.warning("No hay miembros registrados para este grupo.")
+        st.warning("No hay miembros registrados en este grupo.")
         return
 
-    # Asistencia ya guardada para esta reunión
-    registros = fetch_all(
-        """
-        SELECT Id_miembro, Presente
-        FROM asistencia_miembro
-        WHERE Id_reunion = %s
-        """,
-        (id_reunion_sel,),
-    )
-    asist_map = {r["Id_miembro"]: bool(r["Presente"]) for r in registros}
+    asistencia_actual = _obtener_asistencia_reunion(id_reunion_sel)
 
-    with st.form("form_asistencia"):
+    with st.form(f"form_asistencia_{id_reunion_sel}"):
         estados: dict[int, bool] = {}
         for m in miembros:
-            texto = f"{m['Nombre']} — {m['Sexo']} — {m['Cargo']}"
+            label = f"{m['Nombre']} — {m['Sexo']} — {m['Cargo']}"
             estados[m["Id_miembro"]] = st.checkbox(
-                texto,
-                value=asist_map.get(m["Id_miembro"], False),
+                label,
+                value=asistencia_actual.get(m["Id_miembro"], False),
                 key=f"asis_{id_reunion_sel}_{m['Id_miembro']}",
             )
 
         btn_guardar = st.form_submit_button("Guardar asistencia")
 
     if btn_guardar:
-        # BORRAR ASISTENCIA PREVIA DE ESA REUNIÓN
+        # borrar registros anteriores de esa reunión
         execute(
             "DELETE FROM asistencia_miembro WHERE Id_reunion = %s",
             (id_reunion_sel,),
         )
 
-        # INSERTAR NUEVA ASISTENCIA
+        # insertar la asistencia actual
         for id_m, presente in estados.items():
             execute(
                 """
@@ -578,27 +585,12 @@ def _seccion_asistencia(info_dir: dict):
         st.session_state["reunion_abierta"] = id_reunion_sel
         st.rerun()
 
-    # -----------------------------
-    # 4. Resumen rápido y borrar reunión
-    # -----------------------------
-    total_presentes = sum(1 for v in estados.values() if v)
-    st.metric("Total presentes en esta reunión", total_presentes)
-
-    with st.expander("Opciones avanzadas"):
-        if st.button("Eliminar esta reunión (incluye su asistencia)", type="secondary"):
-            execute(
-                "DELETE FROM reuniones_grupo WHERE Id_reunion = %s",
-                (id_reunion_sel,),
-            )
-            st.success("Reunión eliminada.")
-            if "reunion_abierta" in st.session_state:
-                del st.session_state["reunion_abierta"]
-            st.rerun()
-
 
 # -------------------------------------------------------
 # Panel principal de Directiva
 # -------------------------------------------------------
+
+
 @has_role("DIRECTIVA")
 def directiva_panel():
     """
@@ -608,7 +600,8 @@ def directiva_panel():
     if not info_dir:
         st.error(
             "No se encontró información de directiva asociada a este usuario. "
-            "Verifica que el DUI del usuario esté registrado en la tabla 'directiva'."
+            "Verifica que el DUI del usuario esté registrado en la tabla "
+            "'directiva'."
         )
         return
 
