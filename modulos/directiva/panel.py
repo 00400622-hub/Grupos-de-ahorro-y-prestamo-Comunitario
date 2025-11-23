@@ -505,7 +505,19 @@ def _seccion_asistencia(info_dir: dict):
         st.info("Primero crea o selecciona una reunión para tomar asistencia.")
         return
 
-    st.markdown(f"**Reunión actual:** Id_reunion = {id_reunion_sel}")
+    # Buscar info de la reunión actual (para mostrar fecha y número)
+    reunion_actual = next(
+        (r for r in reuniones if r["Id_reunion"] == id_reunion_sel), None
+    )
+
+    if reunion_actual:
+        st.markdown(
+            f"**Reunión actual:** Id_reunion = {id_reunion_sel} — "
+            f"Fecha: **{reunion_actual['Fecha']}**, "
+            f"Número: **{reunion_actual['Numero_reunion']}**"
+        )
+    else:
+        st.markdown(f"**Reunión actual:** Id_reunion = {id_reunion_sel}")
 
     # ---- Formulario de asistencia ----
     st.markdown("#### 2. Marcar asistencia de miembros")
@@ -558,6 +570,8 @@ def _seccion_asistencia(info_dir: dict):
 
     registros = _obtener_asistencia_de_reunion(id_reunion_sel)
     if registros:
+        if reunion_actual:
+            st.write(f"Fecha de la reunión: **{reunion_actual['Fecha']}**")
         st.table(registros)
         total = len(registros)
         presentes = sum(1 for r in registros if r["Presente"])
@@ -711,6 +725,7 @@ def _seccion_multas(info_dir: dict):
 def _obtener_ahorros_de_reunion(id_grupo: int, id_reunion: int):
     """
     Registros de ahorro para un grupo y una reunión específica.
+    Incluye también la fecha de la reunión.
     """
     sql = """
     SELECT 
@@ -722,9 +737,11 @@ def _obtener_ahorros_de_reunion(id_grupo: int, id_reunion: int):
         a.Ahorro,
         a.Otras_actividades,
         a.Retiros,
-        a.Saldo_final
+        a.Saldo_final,
+        r.Fecha AS Fecha_reunion
     FROM ahorros_miembros a
     JOIN miembros m ON m.Id_miembro = a.Id_miembro
+    JOIN reuniones_grupo r ON r.Id_reunion = a.Id_reunion
     WHERE a.Id_grupo = %s
       AND a.Id_reunion = %s
     ORDER BY m.Cargo, m.Nombre
@@ -790,7 +807,19 @@ def _seccion_ahorro_final(info_dir: dict):
         ),
     )
 
-    st.markdown(f"Reunión seleccionada: **Id_reunion = {id_reunion_sel}**")
+    # Info de la reunión seleccionada
+    reunion_actual = next(
+        (r for r in reuniones if r["Id_reunion"] == id_reunion_sel), None
+    )
+
+    if reunion_actual:
+        st.markdown(
+            f"Reunión seleccionada: **Id_reunion = {id_reunion_sel}** — "
+            f"Fecha: **{reunion_actual['Fecha']}**, "
+            f"Número: **{reunion_actual['Numero_reunion']}**"
+        )
+    else:
+        st.markdown(f"Reunión seleccionada: **Id_reunion = {id_reunion_sel}**")
 
     # Traemos registros existentes de esa reunión
     registros = _obtener_ahorros_de_reunion(id_grupo, id_reunion_sel)
@@ -926,6 +955,19 @@ def _seccion_ahorro_final(info_dir: dict):
 
         st.success("Ahorros guardados correctamente.")
         st.rerun()
+
+    # ---- Resumen de ahorros de la reunión ----
+    st.markdown("### Resumen de ahorros de la reunión")
+
+    registros_resumen = _obtener_ahorros_de_reunion(id_grupo, id_reunion_sel)
+    if registros_resumen:
+        # Todos los registros tienen la misma fecha de reunión
+        fecha_reu = registros_resumen[0].get("Fecha_reunion")
+        if fecha_reu:
+            st.write(f"Fecha de la reunión: **{fecha_reu}**")
+        st.table(registros_resumen)
+    else:
+        st.info("Todavía no hay ahorros registrados para esta reunión.")
 
 
 # -------------------------------------------------------
