@@ -1,4 +1,3 @@
-
 # modulos/directiva/panel.py
 
 import datetime as dt
@@ -95,6 +94,74 @@ def _sumar_meses(fecha: dt.date, meses: int) -> dt.date:
     month = (fecha.month - 1 + meses) % 12 + 1
     day = min(fecha.day, calendar.monthrange(year, month)[1])
     return dt.date(year, month, day)
+
+
+def _sumar_float(sql: str, params=()) -> float:
+    """Ejecuta un SUM(...) AS suma y devuelve 0.0 si es NULL."""
+    fila = fetch_one(sql, params)
+    if not fila or fila.get("suma") is None:
+        return 0.0
+    try:
+        return float(fila["suma"])
+    except Exception:
+        return 0.0
+
+
+# -------------------------------------------------------
+# Helpers de Caja
+# -------------------------------------------------------
+def _obtener_caja_por_reunion(id_grupo: int, id_reunion: int) -> dict | None:
+    sql = """
+    SELECT *
+    FROM caja_reunion
+    WHERE Id_grupo = %s AND Id_reunion = %s
+    LIMIT 1
+    """
+    return fetch_one(sql, (id_grupo, id_reunion))
+
+
+def _obtener_saldo_cierre_anterior(id_grupo: int, fecha_reunion: dt.date) -> float:
+    """
+    Devuelve el saldo de cierre de la caja de la reunión inmediatamente anterior
+    (por fecha) para el grupo. Si no hay, devuelve 0.
+    """
+    sql = """
+    SELECT cr.Saldo_cierre AS saldo
+    FROM caja_reunion cr
+    JOIN reuniones_grupo rg ON rg.Id_reunion = cr.Id_reunion
+    WHERE cr.Id_grupo = %s
+      AND rg.Fecha < %s
+    ORDER BY rg.Fecha DESC, rg.Numero_reunion DESC
+    LIMIT 1
+    """
+    fila = fetch_one(sql, (id_grupo, fecha_reunion))
+    if fila and fila.get("saldo") is not None:
+        try:
+            return float(fila["saldo"])
+        except Exception:
+            return 0.0
+    return 0.0
+
+
+def _obtener_saldo_caja_actual(id_grupo: int) -> float:
+    """
+    Devuelve el último saldo de cierre registrado en caja_reunion para el grupo.
+    Se usa como disponibilidad de caja para nuevos préstamos.
+    """
+    sql = """
+    SELECT Saldo_cierre AS saldo
+    FROM caja_reunion
+    WHERE Id_grupo = %s
+    ORDER BY Id_caja DESC
+    LIMIT 1
+    """
+    fila = fetch_one(sql, (id_grupo,))
+    if fila and fila.get("saldo") is not None:
+        try:
+            return float(fila["saldo"])
+        except Exception:
+            return 0.0
+    return 0.0
 
 
 # -------------------------------------------------------
@@ -633,7 +700,9 @@ def _seccion_asistencia(info_dir: dict):
                     monto_multa=monto_multa,
                 )
 
-        st.success("Asistencia guardada correctamente (y multas de inasistencia generadas).")
+        st.success(
+            "Asistencia guardada correctamente (y multas de inasistencia generadas)."
+        )
         st.rerun()
 
     # ---- Resumen de la reunión ----
@@ -1031,6 +1100,234 @@ def _seccion_ahorro_final(info_dir: dict):
 
 
 # -------------------------------------------------------
+# Sección: Caja
+# Tabla: caja_reunion
+# -------------------------------------------------------
+def _seccion_caja(info_dir: dict):
+    st.subheader("Caja")
+
+    id_grupo = info_dir["Id_grupo"]
+    reuniones = _obtener_reuniones_de_grupo(id_grupo)
+
+    if not reuniones:
+        st.info("Todavía no hay reuniones registradas. Crea al menos una en Asistencia.")
+        return
+
+    opciones_reu = {
+        f"{r['Fecha']} - Reunión {r['Numero_reunion']} ({r['Tema']})": r["Id_reunion"]
+        for r in reuniones
+    }
+
+    st.markdown("### Seleccionar reunión para ver la caja")
+
+    id_reunion_sel = st.selectbox(
+        "Reunión",
+        list(opciones_reu.values()),
+        format_func=lambda rid: next(
+            k for k, v in opciones_reu.items() if v == rid
+        ),
+    )
+
+    info_reu = _obtener_reunion_por_id(id_reunion_sel)
+    fecha_reu = info_reu["Fecha"]
+
+    st.markdown(
+        f"Reunión seleccionada: **{fecha_reu}** — N° {info_reu['Numero_reunion']} — {info_reu['Tema']}"
+    )
+
+    # Caja existente (si ya se guardó antes)
+    caja = _obtener_caja_por_reunion(id_grupo, id_reunion_sel)
+
+    # Saldo de apertura: si ya hay caja guardada, usamos ese; si no, lo calculamos
+    if caja:
+        saldo_apertura = float(caja["Saldo_apertura"])
+        otros_ingresos_default = float(caja["Otros_ingresos"])
+        otros_gastos_default = float(caja["Otros_gastos"])
+    else:
+        saldo_apertura = _obtener_saldo_cierre_anterior(id_grupo, fecha_reu)
+        otros_ingresos_default = 0.0
+        otros_gastos_default = 0.0
+
+    # ---- DINERO QUE ENTRA (automático) ----
+    multas_pagadas = _sumar_float(
+        """
+        SELECT SUM(Monto) AS suma
+        FROM multas_miembro
+        WHERE Id_grupo = %s AND Pagada = 1 AND Fecha_pago = %s
+        """,
+        (id_grupo, fecha_reu),
+    )
+
+    ahorros = _sumar_float(
+        """
+        SELECT SUM(Ahorro) AS suma
+        FROM ahorros_miembros
+        WHERE Id_grupo = %s AND Id_reunion = %s
+        """,
+        (id_grupo, id_reunion_sel),
+    )
+
+    otras_act = _sumar_float(
+        """
+        SELECT SUM(Otras_actividades) AS suma
+        FROM ahorros_miembros
+        WHERE Id_grupo = %s AND Id_reunion = %s
+        """,
+        (id_grupo, id_reunion_sel),
+    )
+
+    pagos_prestamos = _sumar_float(
+        """
+        SELECT SUM(pp.Capital_pagado + pp.Interes_pagado) AS suma
+        FROM pagos_prestamo pp
+        JOIN prestamos_miembro p ON p.Id_prestamo = pp.Id_prestamo
+        WHERE p.Id_grupo = %s AND pp.Fecha_programada = %s
+        """,
+        (id_grupo, fecha_reu),
+    )
+
+    # ---- DINERO QUE SALE (automático) ----
+    retiros_ahorros = _sumar_float(
+        """
+        SELECT SUM(Retiros) AS suma
+        FROM ahorros_miembros
+        WHERE Id_grupo = %s AND Id_reunion = %s
+        """,
+        (id_grupo, id_reunion_sel),
+    )
+
+    desembolsos_prestamos = _sumar_float(
+        """
+        SELECT SUM(Monto) AS suma
+        FROM prestamos_miembro
+        WHERE Id_grupo = %s AND Fecha_prestamo = %s
+        """,
+        (id_grupo, fecha_reu),
+    )
+
+    # ---- Formulario para otros ingresos/gastos y guardar ----
+    with st.form("form_caja"):
+        st.markdown("### Dinero que entra")
+        st.write(f"- Multas pagadas: **${multas_pagadas:.2f}**")
+        st.write(f"- Ahorros: **${ahorros:.2f}**")
+        st.write(f"- Otras actividades: **${otras_act:.2f}**")
+        st.write(
+            f"- Pago de préstamos (capital e interés): **${pagos_prestamos:.2f}**"
+        )
+
+        otros_ingresos = st.number_input(
+            "Otros ingresos del grupo",
+            min_value=0.0,
+            step=1.0,
+            format="%.2f",
+            value=otros_ingresos_default,
+        )
+
+        total_entradas = (
+            multas_pagadas + ahorros + otras_act + pagos_prestamos + otros_ingresos
+        )
+
+        st.write(f"**Total dinero que entra:** ${total_entradas:.2f}")
+
+        st.markdown("### Dinero que sale")
+        st.write(f"- Retiro de ahorros: **${retiros_ahorros:.2f}**")
+        st.write(f"- Desembolso de préstamos: **${desembolsos_prestamos:.2f}**")
+
+        otros_gastos = st.number_input(
+            "Otros gastos del grupo",
+            min_value=0.0,
+            step=1.0,
+            format="%.2f",
+            value=otros_gastos_default,
+        )
+
+        total_salidas = retiros_ahorros + desembolsos_prestamos + otros_gastos
+
+        st.write(f"**Total dinero que sale:** ${total_salidas:.2f}")
+
+        saldo_despues_entradas = saldo_apertura + total_entradas
+        saldo_cierre = saldo_despues_entradas - total_salidas
+
+        st.markdown("### Resumen de caja")
+        st.write(f"Saldo de apertura: **${saldo_apertura:.2f}**")
+        st.write(f"Saldo después de que entra dinero: **${saldo_despues_entradas:.2f}**")
+        st.write(f"Saldo de cierre: **${saldo_cierre:.2f}**")
+
+        btn_guardar_caja = st.form_submit_button("Guardar caja de la reunión")
+
+    if btn_guardar_caja:
+        if caja:
+            sql_up = """
+            UPDATE caja_reunion
+            SET Saldo_apertura = %s,
+                Multas = %s,
+                Ahorros = %s,
+                Otras_actividades = %s,
+                Pagos_prestamos = %s,
+                Otros_ingresos = %s,
+                Total_entradas = %s,
+                Retiros_ahorros = %s,
+                Desembolsos_prestamos = %s,
+                Otros_gastos = %s,
+                Total_salidas = %s,
+                Saldo_cierre = %s
+            WHERE Id_caja = %s
+            """
+            execute(
+                sql_up,
+                (
+                    saldo_apertura,
+                    multas_pagadas,
+                    ahorros,
+                    otras_act,
+                    pagos_prestamos,
+                    otros_ingresos,
+                    total_entradas,
+                    retiros_ahorros,
+                    desembolsos_prestamos,
+                    otros_gastos,
+                    total_salidas,
+                    saldo_cierre,
+                    caja["Id_caja"],
+                ),
+            )
+        else:
+            sql_ins = """
+            INSERT INTO caja_reunion (
+                Id_grupo, Id_reunion,
+                Saldo_apertura,
+                Multas, Ahorros, Otras_actividades, Pagos_prestamos,
+                Otros_ingresos, Total_entradas,
+                Retiros_ahorros, Desembolsos_prestamos, Otros_gastos,
+                Total_salidas, Saldo_cierre
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """
+            execute(
+                sql_ins,
+                (
+                    id_grupo,
+                    id_reunion_sel,
+                    saldo_apertura,
+                    multas_pagadas,
+                    ahorros,
+                    otras_act,
+                    pagos_prestamos,
+                    otros_ingresos,
+                    total_entradas,
+                    retiros_ahorros,
+                    desembolsos_prestamos,
+                    otros_gastos,
+                    total_salidas,
+                    saldo_cierre,
+                ),
+            )
+
+        st.success("Caja de la reunión guardada correctamente.")
+        st.rerun()
+
+
+# -------------------------------------------------------
 # Sección: Préstamos
 # Tablas: prestamos_miembro y pagos_prestamo
 # -------------------------------------------------------
@@ -1086,13 +1383,21 @@ def _seccion_prestamos(info_dir: dict):
         st.info("Primero debes registrar miembros para poder otorgar préstamos.")
         return
 
-    # Tasa mensual sugerida a partir del reglamento (Interes_por_10 / 10)
-    tasa_default_mensual = 0.05
+    # Tasa mensual tomada automáticamente del reglamento (Interes_por_10 / 10)
+    # Si en el reglamento dice 0.5 por cada $10, la tasa mensual es 0.05 (5%)
+    tasa_mensual = 0.05
     if reglamento and reglamento.get("Interes_por_10") is not None:
         try:
-            tasa_default_mensual = float(reglamento["Interes_por_10"]) / 10.0
+            tasa_mensual = float(reglamento["Interes_por_10"]) / 10.0
         except Exception:
-            tasa_default_mensual = 0.05
+            tasa_mensual = 0.05
+
+    saldo_caja_actual = _obtener_saldo_caja_actual(id_grupo)
+    st.info(
+        f"Saldo de caja disponible según último cierre: **${saldo_caja_actual:.2f}**\n\n"
+        f"Tasa de interés mensual aplicada (desde reglamento): "
+        f"**{tasa_mensual*100:.2f}%**"
+    )
 
     st.markdown("### Registrar nuevo préstamo")
 
@@ -1122,17 +1427,10 @@ def _seccion_prestamos(info_dir: dict):
         )
 
         st.write(
-            "Tasa de interés mensual en **porcentaje**. "
-            "Por ejemplo, si la tasa es 5% mensual, aquí escribes **5** (no 0.05)."
+            "La tasa mensual se toma automáticamente del reglamento del grupo.\n"
+            "Si en el reglamento dice, por ejemplo, 0.5 por cada $10, aquí se usa 5% mensual."
         )
-        tasa_porcentaje = st.number_input(
-            "Tasa de interés mensual (%)",
-            min_value=0.0,
-            step=0.1,
-            format="%.2f",
-            value=round(tasa_default_mensual * 100, 2),
-        )
-        tasa_mensual = tasa_porcentaje / 100.0  # 5% -> 0.05
+        st.write(f"**Tasa mensual aplicada:** {tasa_mensual*100:.2f}%")
 
         fecha_primer_pago = st.date_input(
             "Fecha del primer pago",
@@ -1148,84 +1446,94 @@ def _seccion_prestamos(info_dir: dict):
 
     if btn_calcular:
         if monto <= 0 or meses_plazo <= 0 or tasa_mensual < 0:
-            st.error("Verifica que monto, plazo y tasa sean válidos.")
-        else:
-            # Cálculos básicos
-            interes_total = monto * tasa_mensual * meses_plazo
-            capital_total = monto
-            total_pagar = capital_total + interes_total
+            st.error("Verifica que monto y plazo sean válidos.")
+            return
 
-            capital_cuota = capital_total / meses_plazo
-            interes_cuota = interes_total / meses_plazo
-
-            # Insertar préstamo
-            sql_ins = """
-            INSERT INTO prestamos_miembro (
-                Id_grupo, Id_miembro, Fecha_prestamo, Fecha_primer_pago,
-                Meses_plazo, Monto, Tasa_mensual,
-                Capital_total, Interes_total, Total_pagar
+        if monto > saldo_caja_actual:
+            st.error(
+                "El monto del préstamo supera el saldo de caja disponible. "
+                "No se puede otorgar este préstamo."
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            return
+
+        # Cálculos básicos
+        interes_total = monto * tasa_mensual * meses_plazo
+        capital_total = monto
+        total_pagar = capital_total + interes_total
+
+        capital_cuota = capital_total / meses_plazo
+        interes_cuota = interes_total / meses_plazo
+
+        # Insertar préstamo
+        sql_ins = """
+        INSERT INTO prestamos_miembro (
+            Id_grupo, Id_miembro, Fecha_prestamo, Fecha_primer_pago,
+            Meses_plazo, Monto, Tasa_mensual,
+            Capital_total, Interes_total, Total_pagar,
+            Proposito
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        execute(
+            sql_ins,
+            (
+                id_grupo,
+                id_miembro_sel,
+                fecha_prestamo,
+                fecha_primer_pago,
+                meses_plazo,
+                monto,
+                tasa_mensual,
+                capital_total,
+                interes_total,
+                total_pagar,
+                proposito.strip(),
+            ),
+        )
+
+        # Recuperar Id_prestamo recién creado
+        sql_last = """
+        SELECT Id_prestamo
+        FROM prestamos_miembro
+        WHERE Id_grupo = %s AND Id_miembro = %s AND Fecha_prestamo = %s
+        ORDER BY Id_prestamo DESC
+        LIMIT 1
+        """
+        prestamo = fetch_one(sql_last, (id_grupo, id_miembro_sel, fecha_prestamo))
+        if not prestamo:
+            st.error("No se pudo recuperar el préstamo recién creado.")
+            return
+        id_prestamo = prestamo["Id_prestamo"]
+
+        # Crear calendario de pagos (cuotas mensuales)
+        for n in range(1, meses_plazo + 1):
+            fecha_cuota = _sumar_meses(fecha_primer_pago, n - 1)
+            sql_pago = """
+            INSERT INTO pagos_prestamo (
+                Id_prestamo, Numero_cuota, Fecha_programada,
+                Capital_programado, Interes_programado,
+                Capital_pagado, Interes_pagado
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             """
             execute(
-                sql_ins,
+                sql_pago,
                 (
-                    id_grupo,
-                    id_miembro_sel,
-                    fecha_prestamo,
-                    fecha_primer_pago,
-                    meses_plazo,
-                    monto,
-                    tasa_mensual,
-                    capital_total,
-                    interes_total,
-                    total_pagar,
+                    id_prestamo,
+                    n,
+                    fecha_cuota,
+                    capital_cuota,
+                    interes_cuota,
+                    0.0,
+                    0.0,
                 ),
             )
 
-            # Recuperar Id_prestamo recién creado
-            sql_last = """
-            SELECT Id_prestamo
-            FROM prestamos_miembro
-            WHERE Id_grupo = %s AND Id_miembro = %s AND Fecha_prestamo = %s
-            ORDER BY Id_prestamo DESC
-            LIMIT 1
-            """
-            prestamo = fetch_one(sql_last, (id_grupo, id_miembro_sel, fecha_prestamo))
-            if not prestamo:
-                st.error("No se pudo recuperar el préstamo recién creado.")
-                return
-            id_prestamo = prestamo["Id_prestamo"]
-
-            # Crear calendario de pagos (cuotas mensuales)
-            for n in range(1, meses_plazo + 1):
-                fecha_cuota = _sumar_meses(fecha_primer_pago, n - 1)
-                sql_pago = """
-                INSERT INTO pagos_prestamo (
-                    Id_prestamo, Numero_cuota, Fecha_programada,
-                    Capital_programado, Interes_programado,
-                    Capital_pagado, Interes_pagado
-                )
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                """
-                execute(
-                    sql_pago,
-                    (
-                        id_prestamo,
-                        n,
-                        fecha_cuota,
-                        capital_cuota,
-                        interes_cuota,
-                        0.0,
-                        0.0,
-                    ),
-                )
-
-            st.success(
-                f"Préstamo guardado correctamente. Capital total: ${capital_total:.2f}, "
-                f"intereses totales: ${interes_total:.2f}, total a pagar: ${total_pagar:.2f}."
-            )
-            st.rerun()
+        st.success(
+            f"Préstamo guardado correctamente. Capital total: ${capital_total:.2f}, "
+            f"intereses totales: ${interes_total:.2f}, total a pagar: ${total_pagar:.2f}."
+        )
+        st.rerun()
 
     # -------- Gestión de préstamos existentes --------
     st.markdown("---")
@@ -1426,9 +1734,9 @@ def directiva_panel():
     with tabs[5]:
         _seccion_prestamos(info_dir)
 
-    # Caja (pendiente)
+    # Caja
     with tabs[6]:
-        st.info("Aquí se implementará el manejo de caja.")
+        _seccion_caja(info_dir)
 
     # Cierre de ciclo (pendiente)
     with tabs[7]:
