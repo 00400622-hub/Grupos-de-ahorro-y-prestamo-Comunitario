@@ -1373,12 +1373,10 @@ def _seccion_caja(info_dir: dict):
 # Sección: Préstamos
 # Tablas: prestamos_miembro y pagos_prestamo
 # -------------------------------------------------------
-
 def _obtener_prestamos_de_grupo(id_grupo: int):
     sql = """
     SELECT 
         p.Id_prestamo,
-        p.Id_grupo,
         p.Id_miembro,
         m.Nombre,
         m.Cargo,
@@ -1427,16 +1425,20 @@ def _seccion_prestamos(info_dir: dict):
         st.info("Primero debes registrar miembros para poder otorgar préstamos.")
         return
 
-    # ---------------------- tasa mensual desde reglamento ----------------------
-    # Usamos Interes_por_10 del reglamento:
-    # si el reglamento dice "pagamos X por cada $10", la tasa mensual aproximada
-    # es X / 10 (ej: X = 0.5  -> 0.05 = 5%).
-    tasa_mensual = 0.05  # valor por defecto (5%) si no hay reglamento
+    # Tasa mensual tomada automáticamente del reglamento (Interes_por_10 / 10)
+    tasa_mensual = 0.05
     if reglamento and reglamento.get("Interes_por_10") is not None:
         try:
             tasa_mensual = float(reglamento["Interes_por_10"]) / 10.0
         except Exception:
             tasa_mensual = 0.05
+
+    saldo_caja_actual = _obtener_saldo_caja_actual(id_grupo)
+    st.info(
+        f"Saldo disponible en caja: **${saldo_caja_actual:.2f}**\n\n"
+        f"Tasa de interés mensual aplicada (desde reglamento): "
+        f"**{tasa_mensual*100:.2f}%**"
+    )
 
     st.markdown("### Registrar nuevo préstamo")
 
@@ -1451,114 +1453,87 @@ def _seccion_prestamos(info_dir: dict):
         )
         id_miembro_sel = opciones_miembro[miembro_label]
 
-        fecha_prestamo = st.date_input(
-            "Fecha del préstamo",
-            value=dt.date.today(),
-            key="fecha_prestamo_nuevo",
-        )
-
+        fecha_prestamo = st.date_input("Fecha del préstamo", value=dt.date.today())
         meses_plazo = st.number_input(
             "Plazo en meses",
             min_value=1,
             step=1,
             value=3,
-            key="meses_plazo_nuevo",
         )
-
         monto = st.number_input(
             "Monto del préstamo ($)",
             min_value=0.0,
             step=10.0,
             format="%.2f",
-            key="monto_prestamo_nuevo",
         )
 
-        # Solo mostramos la tasa, NO se edita
-        st.info(
-            f"Tasa mensual según reglamento: **{tasa_mensual * 100:.2f}%** "
-            "(se usará automáticamente para los cálculos)."
+        st.write(
+            "La tasa mensual se toma automáticamente del reglamento del grupo.\n"
+            "Si en el reglamento dice, por ejemplo, 0.5 por cada $10, aquí se usa 5% mensual."
         )
+        st.write(f"**Tasa mensual aplicada:** {tasa_mensual*100:.2f}%")
 
         fecha_primer_pago = st.date_input(
             "Fecha del primer pago",
             value=_sumar_meses(fecha_prestamo, 1),
-            key="fecha_primer_pago_nuevo",
         )
 
         proposito = st.text_area(
             "Propósito del préstamo",
             placeholder="Ejemplo: capital de trabajo, emergencia médica, etc.",
-            key="proposito_prestamo",
         )
 
         btn_calcular = st.form_submit_button("Calcular y guardar préstamo")
 
     if btn_calcular:
-        # ---------------------- validaciones básicas ---------------------------
-        if monto <= 0:
-            st.error("El monto del préstamo debe ser mayor que 0.")
-            return
-        if meses_plazo <= 0:
-            st.error("El plazo en meses debe ser mayor que 0.")
+        if monto <= 0 or meses_plazo <= 0 or tasa_mensual < 0:
+            st.error("Verifica que monto y plazo sean válidos.")
             return
 
-        # ------------- validación contra caja (disponibilidad) ---------------
-        # Este helper lo habíamos definido en la sección de caja; lo usamos aquí.
-        # Si en tu código se llama distinto, cambia el nombre.
-        try:
-            saldo_caja_actual = _obtener_saldo_caja_actual(id_grupo)
-        except NameError:
-            # Si no existe el helper, considera quitar esta parte o implementarlo.
-            saldo_caja_actual = 0.0
-
-        if saldo_caja_actual < monto:
+        if monto > saldo_caja_actual:
             st.error(
-                f"No hay suficiente dinero en caja para desembolsar este préstamo.\n\n"
-                f"Saldo disponible en caja: ${saldo_caja_actual:.2f}\n"
-                f"Monto solicitado: ${monto:.2f}"
+                "El monto del préstamo supera el saldo de caja disponible. "
+                "No se puede otorgar este préstamo."
             )
             return
 
-        # ---------------------- cálculos financieros -------------------------
-        interes_total = monto * tasa_mensual * meses_plazo
-        capital_total = monto
-        total_pagar = capital_total + interes_total
+        # --- Cálculos redondeados para evitar problemas con DECIMAL ---
+        interes_total = round(monto * tasa_mensual * meses_plazo, 2)
+        capital_total = round(monto, 2)
+        total_pagar = round(capital_total + interes_total, 2)
 
-        capital_cuota = capital_total / meses_plazo
-        interes_cuota = interes_total / meses_plazo
+        capital_cuota = round(capital_total / meses_plazo, 2)
+        interes_cuota = round(interes_total / meses_plazo, 2)
 
-        # ---------------------- INSERT en prestamos_miembro -------------------
-        # IMPORTANTE: 10 columnas y 10 placeholders %s (coincide con tu tabla)
+        # --- Insert de préstamo con manejo de errores para ver el mensaje real ---
         sql_ins = """
         INSERT INTO prestamos_miembro (
-            Id_grupo,
-            Id_miembro,
-            Fecha_prestamo,
-            Fecha_primer_pago,
-            Meses_plazo,
-            Monto,
-            Tasa_mensual,
-            Capital_total,
-            Interes_total,
-            Total_pagar
+            Id_grupo, Id_miembro, Fecha_prestamo, Fecha_primer_pago,
+            Meses_plazo, Monto, Tasa_mensual,
+            Capital_total, Interes_total, Total_pagar
         )
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
-        execute(
-            sql_ins,
-            (
-                id_grupo,
-                id_miembro_sel,
-                fecha_prestamo,
-                fecha_primer_pago,
-                meses_plazo,
-                monto,
-                tasa_mensual,
-                capital_total,
-                interes_total,
-                total_pagar,
-            ),
-        )
+        try:
+            execute(
+                sql_ins,
+                (
+                    id_grupo,
+                    id_miembro_sel,
+                    fecha_prestamo,
+                    fecha_primer_pago,
+                    int(meses_plazo),
+                    capital_total,
+                    tasa_mensual,
+                    capital_total,
+                    interes_total,
+                    total_pagar,
+                ),
+            )
+        except Exception as e:
+            # Esto evita que Streamlit oculte el mensaje y nos deja ver el error de MySQL
+            st.error(f"Error al guardar el préstamo en la tabla prestamos_miembro: {e}")
+            return
 
         # Recuperar Id_prestamo recién creado
         sql_last = """
@@ -1572,42 +1547,41 @@ def _seccion_prestamos(info_dir: dict):
         if not prestamo:
             st.error("No se pudo recuperar el préstamo recién creado.")
             return
-
         id_prestamo = prestamo["Id_prestamo"]
 
-        # ---------------------- calendario de pagos --------------------------
-        for n in range(1, meses_plazo + 1):
+        # Crear calendario de pagos (cuotas mensuales)
+        for n in range(1, int(meses_plazo) + 1):
             fecha_cuota = _sumar_meses(fecha_primer_pago, n - 1)
             sql_pago = """
             INSERT INTO pagos_prestamo (
-                Id_prestamo,
-                Numero_cuota,
-                Fecha_programada,
-                Capital_programado,
-                Interes_programado,
-                Capital_pagado,
-                Interes_pagado
+                Id_prestamo, Numero_cuota, Fecha_programada,
+                Capital_programado, Interes_programado,
+                Capital_pagado, Interes_pagado
             )
             VALUES (%s, %s, %s, %s, %s, %s, %s)
             """
-            execute(
-                sql_pago,
-                (
-                    id_prestamo,
-                    n,
-                    fecha_cuota,
-                    capital_cuota,
-                    interes_cuota,
-                    0.0,
-                    0.0,
-                ),
-            )
+            try:
+                execute(
+                    sql_pago,
+                    (
+                        id_prestamo,
+                        n,
+                        fecha_cuota,
+                        capital_cuota,
+                        interes_cuota,
+                        0.0,
+                        0.0,
+                    ),
+                )
+            except Exception as e:
+                st.error(
+                    f"Error al crear la cuota {n} en la tabla pagos_prestamo: {e}"
+                )
+                return
 
         st.success(
-            f"Préstamo guardado correctamente.\n\n"
-            f"- Capital total: ${capital_total:.2f}\n"
-            f"- Intereses totales: ${interes_total:.2f}\n"
-            f"- Total a pagar: ${total_pagar:.2f}"
+            f"Préstamo guardado correctamente. Capital total: ${capital_total:.2f}, "
+            f"intereses totales: ${interes_total:.2f}, total a pagar: ${total_pagar:.2f}."
         )
         st.rerun()
 
@@ -1632,7 +1606,6 @@ def _seccion_prestamos(info_dir: dict):
         format_func=lambda pid: next(
             k for k, v in etiquetas_prestamo.items() if v == pid
         ),
-        key="prestamo_existente_select",
     )
 
     prestamo_sel = next(p for p in prestamos if p["Id_prestamo"] == id_prestamo_sel)
@@ -1642,7 +1615,7 @@ def _seccion_prestamos(info_dir: dict):
         f"**Socia:** {prestamo_sel['Nombre']} ({prestamo_sel['Cargo']}) — "
         f"Fecha préstamo: {prestamo_sel['Fecha_prestamo']} — "
         f"Monto: ${prestamo_sel['Monto']:.2f} — "
-        f"Tasa mensual: {prestamo_sel['Tasa_mensual'] * 100:.2f}% — "
+        f"Tasa mensual: {prestamo_sel['Tasa_mensual']*100:.2f}% — "
         f"Total a pagar: ${prestamo_sel['Total_pagar']:.2f}"
     )
 
@@ -1748,6 +1721,7 @@ def _seccion_prestamos(info_dir: dict):
     st.write(f"- Interés pagado: **${total_int_pag:.2f}**")
     st.write(f"- Total pagado: **${total_pagado:.2f}**")
     st.write(f"- Saldo pendiente: **${saldo_pendiente:.2f}**")
+
 
 
 # -------------------------------------------------------
