@@ -940,6 +940,7 @@ def _seccion_ahorro_final(info_dir: dict):
         format_func=lambda rid: next(
             k for k, v in opciones_reu.items() if v == rid
         ),
+        key="reunion_ahorro",
     )
 
     info_reu = _obtener_reunion_por_id(id_reunion_sel)
@@ -1126,6 +1127,7 @@ def _seccion_caja(info_dir: dict):
         format_func=lambda rid: next(
             k for k, v in opciones_reu.items() if v == rid
         ),
+        key="reunion_caja",   # <-- clave única para evitar IDs duplicados
     )
 
     info_reu = _obtener_reunion_por_id(id_reunion_sel)
