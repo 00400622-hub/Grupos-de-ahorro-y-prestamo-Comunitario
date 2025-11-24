@@ -541,7 +541,9 @@ def _seccion_miembros(info_dir: dict):
                         (mid,),
                     )
 
-                st.success("Miembros y sus registros asociados fueron eliminados correctamente.")
+                st.success(
+                    "Miembros y sus registros asociados fueron eliminados correctamente."
+                )
                 st.rerun()
     else:
         st.info("Aún no se han registrado miembros para este grupo.")
@@ -1504,15 +1506,14 @@ def _seccion_prestamos(info_dir: dict):
         capital_cuota = capital_total / meses_plazo
         interes_cuota = interes_total / meses_plazo
 
-        # Insertar préstamo
+        # Insertar préstamo (SIN Proposito porque la tabla no lo tiene)
         sql_ins = """
         INSERT INTO prestamos_miembro (
             Id_grupo, Id_miembro, Fecha_prestamo, Fecha_primer_pago,
             Meses_plazo, Monto, Tasa_mensual,
-            Capital_total, Interes_total, Total_pagar,
-            Proposito
+            Capital_total, Interes_total, Total_pagar
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         execute(
             sql_ins,
@@ -1527,7 +1528,6 @@ def _seccion_prestamos(info_dir: dict):
                 capital_total,
                 interes_total,
                 total_pagar,
-                proposito.strip(),
             ),
         )
 
