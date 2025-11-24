@@ -2046,7 +2046,9 @@ def _seccion_cierre_ciclo(info_dir: dict):
             )
             return
 
-    # Insertar en cierres_ciclo
+        # Insertar en cierres_ciclo
+    total_fondo_grupo = total_ahorro_grupo  # o ajusta si quieres otra lógica
+
     sql_ins_cierre = """
     INSERT INTO cierres_ciclo (
         Id_grupo,
@@ -2054,9 +2056,10 @@ def _seccion_cierre_ciclo(info_dir: dict):
         Fecha_inicio_ciclo,
         Fecha_fin_ciclo,
         Total_ahorro_grupo,
+        Total_fondo_grupo,
         Porcion_fondo_grupo
     )
-    VALUES (%s, %s, %s, %s, %s, %s)
+    VALUES (%s, %s, %s, %s, %s, %s, %s)
     """
     execute(
         sql_ins_cierre,
@@ -2066,9 +2069,11 @@ def _seccion_cierre_ciclo(info_dir: dict):
             fecha_inicio_ciclo,
             fecha_fin_ciclo,
             total_ahorro_grupo,
+            total_fondo_grupo,
             porcion_fondo,
         ),
     )
+
 
     # Recuperar Id_cierre
     sql_sel_cierre = """
