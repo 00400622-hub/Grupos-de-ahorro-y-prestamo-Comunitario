@@ -165,6 +165,142 @@ def _obtener_saldo_caja_actual(id_grupo: int) -> float:
 
 
 # -------------------------------------------------------
+# Helpers de Cierre de ciclo
+# -------------------------------------------------------
+def _tiene_prestamos_pendientes(id_grupo: int) -> bool:
+    """
+    True si existe al menos un préstamo del grupo con saldo pendiente.
+    """
+    sql = """
+    SELECT 
+        p.Id_prestamo,
+        p.Total_pagar,
+        COALESCE(SUM(pp.Capital_pagado + pp.Interes_pagado), 0) AS Pagado
+    FROM prestamos_miembro p
+    LEFT JOIN pagos_prestamo pp ON pp.Id_prestamo = p.Id_prestamo
+    WHERE p.Id_grupo = %s
+    GROUP BY p.Id_prestamo, p.Total_pagar
+    HAVING Pagado < p.Total_pagar - 0.01
+    """
+    filas = fetch_all(sql, (id_grupo,))
+    return bool(filas)
+
+
+def _tiene_multas_pendientes(id_grupo: int) -> bool:
+    """
+    True si hay multas NO pagadas en el grupo.
+    """
+    sql = """
+    SELECT COUNT(*) AS c
+    FROM multas_miembro
+    WHERE Id_grupo = %s AND Pagada = 0
+    """
+    fila = fetch_one(sql, (id_grupo,))
+    return bool(fila and fila.get("c", 0) > 0)
+
+
+def _obtener_cierres_ciclo_grupo(id_grupo: int):
+    """
+    Devuelve todos los cierres de ciclo del grupo (historial).
+    """
+    sql = """
+    SELECT 
+        Id_cierre,
+        Id_grupo,
+        Fecha_cierre,
+        Fecha_inicio_ciclo,
+        Fecha_fin_ciclo,
+        Total_ahorro_grupo,
+        Porcion_fondo_grupo
+    FROM cierres_ciclo
+    WHERE Id_grupo = %s
+    ORDER BY Fecha_cierre DESC, Id_cierre DESC
+    """
+    return fetch_all(sql, (id_grupo,))
+
+
+def _obtener_detalle_cierre(id_cierre: int):
+    """
+    Devuelve el detalle por miembro de un cierre de ciclo.
+    """
+    sql = """
+    SELECT 
+        ccm.Id_cierre_miembro,
+        ccm.Id_miembro,
+        m.Nombre,
+        m.Cargo,
+        ccm.Total_ahorrado_ciclo,
+        ccm.Total_correspondiente,
+        ccm.Retiro_cierre,
+        ccm.Saldo_siguiente_ciclo
+    FROM cierres_ciclo_miembros ccm
+    JOIN miembros m ON m.Id_miembro = ccm.Id_miembro
+    WHERE ccm.Id_cierre = %s
+    ORDER BY m.Cargo, m.Nombre
+    """
+    return fetch_all(sql, (id_cierre,))
+
+
+def _obtener_totales_ahorro_ciclo(
+    id_grupo: int,
+    fecha_inicio: dt.date,
+    fecha_fin: dt.date,
+):
+    """
+    Calcula, para cada miembro, el total ahorrado durante el ciclo
+    [fecha_inicio, fecha_fin].
+    """
+    sql = """
+    SELECT 
+        m.Id_miembro,
+        m.Nombre,
+        m.Cargo,
+        COALESCE(SUM(
+            COALESCE(a.Ahorro, 0)
+          + COALESCE(a.Otras_actividades, 0)
+          - COALESCE(a.Retiros, 0)
+        ), 0) AS Total_ahorrado
+    FROM miembros m
+    LEFT JOIN ahorros_miembros a
+        ON a.Id_miembro = m.Id_miembro
+       AND a.Id_grupo = m.Id_grupo
+    LEFT JOIN reuniones_grupo rg
+        ON rg.Id_reunion = a.Id_reunion
+    WHERE m.Id_grupo = %s
+      AND (rg.Fecha IS NULL OR (rg.Fecha BETWEEN %s AND %s))
+    GROUP BY m.Id_miembro, m.Nombre, m.Cargo
+    ORDER BY m.Cargo, m.Nombre
+    """
+    return fetch_all(sql, (id_grupo, fecha_inicio, fecha_fin))
+
+
+def _actualizar_saldo_final_ultimo_ahorro(
+    id_grupo: int, id_miembro: int, nuevo_saldo: float
+):
+    """
+    Actualiza el Saldo_final del último registro de ahorros_miembros
+    del miembro (para que sea saldo inicial del siguiente ciclo).
+    """
+    sql_sel = """
+    SELECT Id_ahorro
+    FROM ahorros_miembros
+    WHERE Id_grupo = %s AND Id_miembro = %s
+    ORDER BY Id_reunion DESC, Id_ahorro DESC
+    LIMIT 1
+    """
+    fila = fetch_one(sql_sel, (id_grupo, id_miembro))
+    if not fila:
+        return
+
+    sql_up = """
+    UPDATE ahorros_miembros
+    SET Saldo_final = %s
+    WHERE Id_ahorro = %s
+    """
+    execute(sql_up, (nuevo_saldo, fila["Id_ahorro"]))
+
+
+# -------------------------------------------------------
 # Sección: Reglamento de grupo
 # -------------------------------------------------------
 def _seccion_reglamento(info_dir: dict):
@@ -1269,7 +1405,7 @@ def _seccion_caja(info_dir: dict):
             multas_pagadas + ahorros + otras_act + pagos_prestamos + otros_ingresos
         )
 
-        st.write(f"**Total dinero que entra:** ${total_entradas:.2f}")
+        st.write(f"**Total dinero que entra:** ${total_entradas:.2f}**")
 
         st.markdown("### Dinero que sale")
         st.write(f"- Retiro de ahorros: **${retiros_ahorros:.2f}**")
@@ -1285,7 +1421,7 @@ def _seccion_caja(info_dir: dict):
 
         total_salidas = retiros_ahorros + desembolsos_prestamos + otros_gastos
 
-        st.write(f"**Total dinero que sale:** ${total_salidas:.2f}")
+        st.write(f"**Total dinero que sale:** ${total_salidas:.2f}**")
 
         saldo_despues_entradas = saldo_apertura + total_entradas
         saldo_cierre = saldo_despues_entradas - total_salidas
@@ -1531,7 +1667,6 @@ def _seccion_prestamos(info_dir: dict):
                 ),
             )
         except Exception as e:
-            # Esto evita que Streamlit oculte el mensaje y nos deja ver el error de MySQL
             st.error(f"Error al guardar el préstamo en la tabla prestamos_miembro: {e}")
             return
 
@@ -1723,6 +1858,272 @@ def _seccion_prestamos(info_dir: dict):
     st.write(f"- Saldo pendiente: **${saldo_pendiente:.2f}**")
 
 
+# -------------------------------------------------------
+# Sección: Cierre de ciclo
+# -------------------------------------------------------
+def _seccion_cierre_ciclo(info_dir: dict):
+    st.subheader("Cierre de ciclo")
+    id_grupo = info_dir["Id_grupo"]
+
+    reglamento = _obtener_reglamento_por_grupo(id_grupo)
+    if not reglamento:
+        st.info("Primero debes definir el reglamento del grupo (ciclo y fechas).")
+        return
+
+    fecha_inicio_ciclo = reglamento.get("Fecha_inicio_ciclo")
+    fecha_fin_ciclo = reglamento.get("Fecha_fin_ciclo")
+
+    if not fecha_inicio_ciclo or not fecha_fin_ciclo:
+        st.warning(
+            "El reglamento no tiene definidas la fecha de inicio y fin del ciclo. "
+            "Complétalas en la pestaña de Reglamento."
+        )
+        return
+
+    st.markdown("### Información del ciclo actual (según reglamento)")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write(f"Fecha de inicio del ciclo: **{fecha_inicio_ciclo}**")
+    with col2:
+        st.write(f"Fecha estimada de cierre del ciclo: **{fecha_fin_ciclo}**")
+
+    # --------------------------- Historial -----------------------------
+    st.markdown("---")
+    st.markdown("### Historial de cierres de ciclo del grupo")
+
+    cierres = _obtener_cierres_ciclo_grupo(id_grupo)
+    if cierres:
+        opciones_cierres = {
+            f"{c['Fecha_cierre']} — del {c['Fecha_inicio_ciclo']} al {c['Fecha_fin_ciclo']} "
+            f"(Total ahorro grupo: ${c['Total_ahorro_grupo']:.2f})": c["Id_cierre"]
+            for c in cierres
+        }
+        id_cierre_sel = st.selectbox(
+            "Selecciona un cierre para consultar su detalle",
+            list(opciones_cierres.values()),
+            format_func=lambda cid: next(
+                k for k, v in opciones_cierres.items() if v == cid
+            ),
+        )
+
+        if id_cierre_sel:
+            st.markdown("#### Detalle de miembros en el cierre seleccionado")
+            detalle = _obtener_detalle_cierre(id_cierre_sel)
+            if detalle:
+                st.table(detalle)
+            else:
+                st.info("No se encontraron detalles de miembros para este cierre.")
+    else:
+        st.info("Aún no se ha registrado ningún cierre de ciclo para este grupo.")
+
+    # ------------------------ Nuevo cierre -----------------------------
+    st.markdown("---")
+    st.markdown("### Registrar nuevo cierre de ciclo")
+
+    # Regla: solo si NO hay préstamos ni multas pendientes
+    hay_prestamos_pend = _tiene_prestamos_pendientes(id_grupo)
+    hay_multas_pend = _tiene_multas_pendientes(id_grupo)
+
+    if hay_prestamos_pend or hay_multas_pend:
+        if hay_prestamos_pend:
+            st.error(
+                "No se puede cerrar el ciclo: todavía hay préstamos con saldo pendiente."
+            )
+        if hay_multas_pend:
+            st.error(
+                "No se puede cerrar el ciclo: todavía hay multas NO pagadas."
+            )
+        st.info(
+            "Cuando todos los préstamos estén liquidados y todas las multas pagadas, "
+            "podrás habilitar el cierre de ciclo."
+        )
+        return
+
+    # Evitar duplicar un cierre para el mismo rango de fechas
+    for c in cierres:
+        if (
+            c["Fecha_inicio_ciclo"] == fecha_inicio_ciclo
+            and c["Fecha_fin_ciclo"] == fecha_fin_ciclo
+        ):
+            st.warning(
+                "Ya existe un cierre de ciclo registrado para este periodo "
+                "(misma fecha de inicio y fin)."
+            )
+            return
+
+    # Totales de ahorro del ciclo por miembro
+    miembros_totales = _obtener_totales_ahorro_ciclo(
+        id_grupo, fecha_inicio_ciclo, fecha_fin_ciclo
+    )
+    if not miembros_totales:
+        st.info(
+            "No se encontraron registros de ahorros para este ciclo. "
+            "Verifica la pestaña de Ahorro final."
+        )
+        return
+
+    num_miembros = len(miembros_totales)
+    total_ahorro_grupo = sum(
+        float(m["Total_ahorrado"] or 0.0) for m in miembros_totales
+    )
+    porcion_fondo = (
+        round(total_ahorro_grupo / num_miembros, 2) if num_miembros > 0 else 0.0
+    )
+
+    st.write(f"**Total ahorro del grupo en el ciclo:** ${total_ahorro_grupo:.2f}")
+    st.write(f"**Número de miembros:** {num_miembros}")
+    st.write(
+        f"**Porción de fondo del grupo por persona (equitativa):** "
+        f"${porcion_fondo:.2f}"
+    )
+
+    # Formulario de cierre
+    with st.form("form_cierre_ciclo"):
+        fecha_cierre = st.date_input(
+            "Fecha de cierre del ciclo",
+            value=fecha_fin_ciclo,
+            help="Debe coincidir con la fecha de cierre definida en el reglamento.",
+        )
+
+        st.markdown("#### Detalle por miembro")
+        datos_cierre = {}
+
+        for m in miembros_totales:
+            mid = m["Id_miembro"]
+            nombre = m["Nombre"]
+            cargo = m["Cargo"]
+            total_ahorrado = float(m["Total_ahorrado"] or 0.0)
+            total_correspondiente = round(total_ahorrado + porcion_fondo, 2)
+
+            st.markdown(f"**{nombre} ({cargo})**")
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.write(f"Total ahorrado en el ciclo: **${total_ahorrado:.2f}**")
+            with col2:
+                st.write(f"Porción del fondo del grupo: **${porcion_fondo:.2f}**")
+            with col3:
+                st.write(
+                    f"Total correspondiente: **${total_correspondiente:.2f}**"
+                )
+            with col4:
+                retiro = st.number_input(
+                    "Retiro en cierre",
+                    min_value=0.0,
+                    step=1.0,
+                    format="%.2f",
+                    key=f"retiro_cierre_{mid}",
+                )
+
+            datos_cierre[mid] = {
+                "total_ahorrado": total_ahorrado,
+                "total_correspondiente": total_correspondiente,
+                "retiro": retiro,
+            }
+
+        st.markdown(
+            "El saldo que NO se retire quedará como **saldo inicial del siguiente ciclo**."
+        )
+
+        btn_guardar_cierre = st.form_submit_button("Guardar cierre de ciclo")
+
+    if not btn_guardar_cierre:
+        return
+
+    # Validar que la fecha de cierre coincida con la del reglamento
+    if fecha_cierre != fecha_fin_ciclo:
+        st.error(
+            "La fecha de cierre que seleccionaste no coincide con la fecha de cierre "
+            "establecida en el reglamento. Modifica la fecha o actualiza el reglamento."
+        )
+        return
+
+    # Validación de retiros
+    for mid, info_m in datos_cierre.items():
+        if info_m["retiro"] > info_m["total_correspondiente"] + 0.01:
+            st.error(
+                "El retiro de alguna socia excede el total correspondiente. "
+                "Revisa los valores antes de guardar."
+            )
+            return
+
+    # Insertar en cierres_ciclo
+    sql_ins_cierre = """
+    INSERT INTO cierres_ciclo (
+        Id_grupo,
+        Fecha_cierre,
+        Fecha_inicio_ciclo,
+        Fecha_fin_ciclo,
+        Total_ahorro_grupo,
+        Porcion_fondo_grupo
+    )
+    VALUES (%s, %s, %s, %s, %s, %s)
+    """
+    execute(
+        sql_ins_cierre,
+        (
+            id_grupo,
+            fecha_cierre,
+            fecha_inicio_ciclo,
+            fecha_fin_ciclo,
+            total_ahorro_grupo,
+            porcion_fondo,
+        ),
+    )
+
+    # Recuperar Id_cierre
+    sql_sel_cierre = """
+    SELECT Id_cierre
+    FROM cierres_ciclo
+    WHERE Id_grupo = %s AND Fecha_cierre = %s
+    ORDER BY Id_cierre DESC
+    LIMIT 1
+    """
+    cierre = fetch_one(sql_sel_cierre, (id_grupo, fecha_cierre))
+    if not cierre:
+        st.error("No se pudo recuperar el cierre de ciclo recién creado.")
+        return
+
+    id_cierre = cierre["Id_cierre"]
+
+    # Detalle por miembro + actualizar saldo final
+    for mid, info_m in datos_cierre.items():
+        total_ahorrado = info_m["total_ahorrado"]
+        total_corr = info_m["total_correspondiente"]
+        retiro = info_m["retiro"]
+        saldo_siguiente = round(total_corr - retiro, 2)
+
+        sql_ins_det = """
+        INSERT INTO cierres_ciclo_miembros (
+            Id_cierre,
+            Id_miembro,
+            Total_ahorrado_ciclo,
+            Total_correspondiente,
+            Retiro_cierre,
+            Saldo_siguiente_ciclo
+        )
+        VALUES (%s, %s, %s, %s, %s, %s)
+        """
+        execute(
+            sql_ins_det,
+            (
+                id_cierre,
+                mid,
+                total_ahorrado,
+                total_corr,
+                retiro,
+                saldo_siguiente,
+            ),
+        )
+
+        _actualizar_saldo_final_ultimo_ahorro(id_grupo, mid, saldo_siguiente)
+
+    st.success("Cierre de ciclo registrado correctamente.")
+    st.info(
+        "Los saldos que dejaron las socias se usarán como saldo inicial en el "
+        "siguiente ciclo, cuando actualicen el reglamento."
+    )
+    st.rerun()
+
 
 # -------------------------------------------------------
 # Panel principal de Directiva
@@ -1789,9 +2190,9 @@ def directiva_panel():
     with tabs[6]:
         _seccion_caja(info_dir)
 
-    # Cierre de ciclo (pendiente)
+    # Cierre de ciclo
     with tabs[7]:
-        st.info("Aquí se implementará el cierre de ciclo.")
+        _seccion_cierre_ciclo(info_dir)
 
     # Reportes (pendiente)
     with tabs[8]:
