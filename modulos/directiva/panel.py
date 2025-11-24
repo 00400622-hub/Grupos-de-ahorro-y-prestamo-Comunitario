@@ -498,12 +498,50 @@ def _seccion_miembros(info_dir: dict):
                 st.warning("No has seleccionado ningún miembro para eliminar.")
             else:
                 ids_a_borrar = [etiquetas[e] for e in seleccion_eliminar]
+
                 for mid in ids_a_borrar:
+                    # 1) Borrar pagos de préstamos del miembro
+                    prestamos_m = fetch_all(
+                        "SELECT Id_prestamo FROM prestamos_miembro WHERE Id_miembro = %s",
+                        (mid,),
+                    )
+                    for p in prestamos_m:
+                        execute(
+                            "DELETE FROM pagos_prestamo WHERE Id_prestamo = %s",
+                            (p["Id_prestamo"],),
+                        )
+
+                    # 2) Borrar préstamos del miembro
+                    execute(
+                        "DELETE FROM prestamos_miembro WHERE Id_miembro = %s",
+                        (mid,),
+                    )
+
+                    # 3) Borrar ahorros del miembro
+                    execute(
+                        "DELETE FROM ahorros_miembros WHERE Id_miembro = %s",
+                        (mid,),
+                    )
+
+                    # 4) Borrar multas del miembro
+                    execute(
+                        "DELETE FROM multas_miembro WHERE Id_miembro = %s",
+                        (mid,),
+                    )
+
+                    # 5) Borrar asistencias del miembro
+                    execute(
+                        "DELETE FROM asistencia_miembro WHERE Id_miembro = %s",
+                        (mid,),
+                    )
+
+                    # 6) Finalmente borrar el miembro
                     execute(
                         "DELETE FROM miembros WHERE Id_miembro = %s",
                         (mid,),
                     )
-                st.success("Miembros eliminados correctamente.")
+
+                st.success("Miembros y sus registros asociados fueron eliminados correctamente.")
                 st.rerun()
     else:
         st.info("Aún no se han registrado miembros para este grupo.")
@@ -1127,7 +1165,7 @@ def _seccion_caja(info_dir: dict):
         format_func=lambda rid: next(
             k for k, v in opciones_reu.items() if v == rid
         ),
-        key="reunion_caja",   # <-- clave única para evitar IDs duplicados
+        key="reunion_caja",
     )
 
     info_reu = _obtener_reunion_por_id(id_reunion_sel)
