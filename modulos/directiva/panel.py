@@ -2046,7 +2046,7 @@ def _seccion_cierre_ciclo(info_dir: dict):
             )
             return
 
-        # Insertar en cierres_ciclo
+    # Insertar en cierres_ciclo
     total_fondo_grupo = total_ahorro_grupo  # o ajusta si quieres otra lógica
 
     sql_ins_cierre = """
@@ -2061,19 +2061,22 @@ def _seccion_cierre_ciclo(info_dir: dict):
     )
     VALUES (%s, %s, %s, %s, %s, %s, %s)
     """
-    execute(
-        sql_ins_cierre,
-        (
-            id_grupo,
-            fecha_cierre,
-            fecha_inicio_ciclo,
-            fecha_fin_ciclo,
-            total_ahorro_grupo,
-            total_fondo_grupo,
-            porcion_fondo,
-        ),
-    )
-
+    try:
+        execute(
+            sql_ins_cierre,
+            (
+                id_grupo,
+                fecha_cierre,
+                fecha_inicio_ciclo,
+                fecha_fin_ciclo,
+                total_ahorro_grupo,
+                total_fondo_grupo,
+                porcion_fondo,
+            ),
+        )
+    except Exception as e:
+        st.error(f"Error al guardar el cierre de ciclo (tabla cierres_ciclo): {e}")
+        return
 
     # Recuperar Id_cierre
     sql_sel_cierre = """
@@ -2108,17 +2111,23 @@ def _seccion_cierre_ciclo(info_dir: dict):
         )
         VALUES (%s, %s, %s, %s, %s, %s)
         """
-        execute(
-            sql_ins_det,
-            (
-                id_cierre,
-                mid,
-                total_ahorrado,
-                total_corr,
-                retiro,
-                saldo_siguiente,
-            ),
-        )
+        try:
+            execute(
+                sql_ins_det,
+                (
+                    id_cierre,
+                    mid,
+                    total_ahorrado,
+                    total_corr,
+                    retiro,
+                    saldo_siguiente,
+                ),
+            )
+        except Exception as e:
+            st.error(
+                f"Error al guardar el detalle del miembro en el cierre de ciclo: {e}"
+            )
+            return
 
         _actualizar_saldo_final_ultimo_ahorro(id_grupo, mid, saldo_siguiente)
 
