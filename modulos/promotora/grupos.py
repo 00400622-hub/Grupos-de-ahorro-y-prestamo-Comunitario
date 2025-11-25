@@ -61,7 +61,7 @@ def _obtener_promotora_actual() -> dict | None:
 
 
 # -------------------------------------------------------
-# Helpers para reportes (reglamento + caja)
+# Helpers para reportes (reglamento + caja + cierres)
 # -------------------------------------------------------
 def _obtener_reglamento_por_grupo(id_grupo: int) -> dict | None:
     """
@@ -93,6 +93,25 @@ def _obtener_caja_por_rango(id_grupo: int, fecha_ini, fecha_fin):
     ORDER BY rg.Fecha
     """
     return fetch_all(sql, (id_grupo, fecha_ini, fecha_fin))
+
+
+def _obtener_cierres_ciclo_grupo(id_grupo: int):
+    """
+    Devuelve todos los cierres de ciclo del grupo (historial),
+    para poder ofrecer ciclos pasados en el reporte.
+    """
+    sql = """
+    SELECT 
+        Id_cierre,
+        Fecha_inicio_ciclo,
+        Fecha_fin_ciclo,
+        Fecha_cierre,
+        Total_ahorro_grupo
+    FROM cierres_ciclo
+    WHERE Id_grupo = %s
+    ORDER BY Fecha_cierre DESC, Id_cierre DESC
+    """
+    return fetch_all(sql, (id_grupo,))
 
 
 # -------------------------------------------------------
@@ -341,23 +360,55 @@ def _seccion_reportes_promotora(promotora: dict):
 
     st.markdown(f"**Grupo seleccionado:** {etiqueta}")
 
-    # Fechas del ciclo según reglamento
+    # ==========================
+    # Selección de ciclo
+    # ==========================
     reglamento = _obtener_reglamento_por_grupo(id_grupo_sel)
-    if not reglamento:
-        st.warning("Este grupo aún no tiene reglamento definido.")
-        return
+    cierres = _obtener_cierres_ciclo_grupo(id_grupo_sel)
 
-    fecha_ini = reglamento.get("Fecha_inicio_ciclo")
-    fecha_fin = reglamento.get("Fecha_fin_ciclo")
+    opciones_periodo: dict[str, tuple] = {}
 
-    if not fecha_ini or not fecha_fin:
+    # Opción: ciclo vigente según reglamento (si tiene fechas)
+    if reglamento:
+        fecha_ini_reg = reglamento.get("Fecha_inicio_ciclo")
+        fecha_fin_reg = reglamento.get("Fecha_fin_ciclo")
+        if fecha_ini_reg and fecha_fin_reg:
+            label_reg = (
+                f"Ciclo vigente (reglamento): {fecha_ini_reg} → {fecha_fin_reg}"
+            )
+            opciones_periodo[label_reg] = (fecha_ini_reg, fecha_fin_reg)
+
+    # Opciones: ciclos cerrados (historial)
+    for c in cierres:
+        fi = c["Fecha_inicio_ciclo"]
+        ff = c["Fecha_fin_ciclo"]
+        fc = c["Fecha_cierre"]
+        total = float(c["Total_ahorro_grupo"] or 0.0)
+
+        label_cierre = (
+            f"Cierre {fc}: {fi} → {ff} "
+            f"(Ahorro grupo: ${total:.2f})"
+        )
+        opciones_periodo[label_cierre] = (fi, ff)
+
+    if not opciones_periodo:
         st.warning(
-            "El reglamento del grupo no tiene definidas las fechas de inicio y fin de ciclo."
+            "Este grupo no tiene definido un ciclo en el reglamento, "
+            "ni cierres de ciclo registrados."
         )
         return
 
+    etiqueta_periodo = st.selectbox(
+        "Selecciona el ciclo a analizar",
+        list(opciones_periodo.keys()),
+    )
+    fecha_ini, fecha_fin = opciones_periodo[etiqueta_periodo]
+
     st.write(f"Ciclo considerado: **{fecha_ini} → {fecha_fin}**")
 
+    # ==========================
+    # Datos de caja en el rango
+    # ==========================
     datos = _obtener_caja_por_rango(id_grupo_sel, fecha_ini, fecha_fin)
     if not datos:
         st.info("No hay registros de caja para este grupo en el ciclo seleccionado.")
