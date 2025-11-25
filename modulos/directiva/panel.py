@@ -164,6 +164,33 @@ def _obtener_saldo_caja_actual(id_grupo: int) -> float:
     return 0.0
 
 
+def _obtener_caja_en_rango(
+    id_grupo: int,
+    fecha_inicio: dt.date,
+    fecha_fin: dt.date,
+):
+    """
+    Devuelve los registros de caja del grupo cuyo fecha de reunión esté entre
+    fecha_inicio y fecha_fin (inclusive). Se usa para los reportes de ingresos/egresos.
+    """
+    sql = """
+    SELECT 
+        cr.Id_caja,
+        cr.Id_reunion,
+        rg.Fecha,
+        rg.Numero_reunion,
+        cr.Total_entradas,
+        cr.Total_salidas,
+        cr.Saldo_cierre
+    FROM caja_reunion cr
+    JOIN reuniones_grupo rg ON rg.Id_reunion = cr.Id_reunion
+    WHERE cr.Id_grupo = %s
+      AND rg.Fecha BETWEEN %s AND %s
+    ORDER BY rg.Fecha, rg.Numero_reunion
+    """
+    return fetch_all(sql, (id_grupo, fecha_inicio, fecha_fin))
+
+
 # -------------------------------------------------------
 # Helpers de Cierre de ciclo
 # -------------------------------------------------------
@@ -2140,6 +2167,119 @@ def _seccion_cierre_ciclo(info_dir: dict):
 
 
 # -------------------------------------------------------
+# Sección: Reportes (Directiva)
+# -------------------------------------------------------
+def _seccion_reportes_directiva(info_dir: dict):
+    st.subheader("Reportes del grupo (ingresos, egresos y consolidado)")
+
+    id_grupo = info_dir["Id_grupo"]
+
+    # Necesitamos el reglamento para saber el ciclo actual
+    reglamento = _obtener_reglamento_por_grupo(id_grupo)
+    if not reglamento:
+        st.info(
+            "Primero debes definir el reglamento del grupo para poder ver reportes."
+        )
+        return
+
+    fecha_inicio_actual = reglamento.get("Fecha_inicio_ciclo")
+    fecha_fin_actual = reglamento.get("Fecha_fin_ciclo")
+
+    if not fecha_inicio_actual or not fecha_fin_actual:
+        st.warning(
+            "El reglamento no tiene definidas la fecha de inicio y fin del ciclo. "
+            "Completa esos datos en la pestaña de Reglamento."
+        )
+        return
+
+    # Opciones de ciclos: ciclo actual + ciclos pasados (de cierres_ciclo)
+    rangos_ciclos: dict[str, tuple[dt.date, dt.date]] = {}
+
+    # Ciclo actual según reglamento
+    rangos_ciclos[
+        f"Ciclo actual: del {fecha_inicio_actual} al {fecha_fin_actual}"
+    ] = (fecha_inicio_actual, fecha_fin_actual)
+
+    # Ciclos pasados a partir de la tabla cierres_ciclo
+    cierres = _obtener_cierres_ciclo_grupo(id_grupo)
+    for c in cierres:
+        label = (
+            f"Ciclo cerrado el {c['Fecha_cierre']}: "
+            f"del {c['Fecha_inicio_ciclo']} al {c['Fecha_fin_ciclo']}"
+        )
+        rangos_ciclos[label] = (c["Fecha_inicio_ciclo"], c["Fecha_fin_ciclo"])
+
+    st.markdown("### Seleccionar ciclo para ver los gráficos")
+    etiqueta_sel = st.selectbox(
+        "Ciclo",
+        list(rangos_ciclos.keys()),
+    )
+
+    fecha_ini, fecha_fin = rangos_ciclos[etiqueta_sel]
+    st.caption(f"Mostrando información desde **{fecha_ini}** hasta **{fecha_fin}**.")
+
+    # Traer información de caja en ese rango
+    movimientos = _obtener_caja_en_rango(id_grupo, fecha_ini, fecha_fin)
+    if not movimientos:
+        st.info(
+            "No se encontraron registros de caja en el rango seleccionado. "
+            "Verifica que se haya registrado la caja en la pestaña correspondiente."
+        )
+        return
+
+    # Construimos listas para los gráficos
+    etiquetas_reu = [
+        f"{m['Fecha']} (Reu {m['Numero_reunion']})" for m in movimientos
+    ]
+    ingresos = [float(m["Total_entradas"] or 0.0) for m in movimientos]
+    egresos = [float(m["Total_salidas"] or 0.0) for m in movimientos]
+    saldos = [float(m["Saldo_cierre"] or 0.0) for m in movimientos]
+
+    total_ingresos = sum(ingresos)
+    total_egresos = sum(egresos)
+    saldo_final = saldos[-1] if saldos else 0.0
+
+    # ----- Gráfico de ingresos -----
+    st.markdown("#### Ingresos del ciclo seleccionado")
+    st.bar_chart(
+        {
+            "Reunión": etiquetas_reu,
+            "Ingresos": ingresos,
+        },
+        x="Reunión",
+        y="Ingresos",
+    )
+    st.write(f"**Total de ingresos del ciclo:** ${total_ingresos:.2f}")
+
+    # ----- Gráfico de egresos -----
+    st.markdown("#### Egresos del ciclo seleccionado")
+    st.bar_chart(
+        {
+            "Reunión": etiquetas_reu,
+            "Egresos": egresos,
+        },
+        x="Reunión",
+        y="Egresos",
+    )
+    st.write(f"**Total de egresos del ciclo:** ${total_egresos:.2f}")
+
+    # ----- Gráfico consolidado (saldo de caja por reunión) -----
+    st.markdown("#### Consolidado del ciclo (saldo de caja por reunión)")
+    st.line_chart(
+        {
+            "Reunión": etiquetas_reu,
+            "Saldo de caja": saldos,
+        },
+        x="Reunión",
+        y="Saldo de caja",
+    )
+    st.write(
+        f"**Saldo de caja al final del ciclo (última reunión en el rango):** "
+        f"${saldo_final:.2f}"
+    )
+
+
+# -------------------------------------------------------
 # Panel principal de Directiva
 # -------------------------------------------------------
 @has_role("DIRECTIVA")
@@ -2208,9 +2348,6 @@ def directiva_panel():
     with tabs[7]:
         _seccion_cierre_ciclo(info_dir)
 
-    # Reportes (pendiente)
+    # Reportes
     with tabs[8]:
-        st.info(
-            "Aquí se implementarán los reportes con gráficos de ingresos, egresos "
-            "y consolidado para el grupo."
-        )
+        _seccion_reportes_directiva(info_dir)
