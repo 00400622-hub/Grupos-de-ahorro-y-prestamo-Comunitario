@@ -2348,6 +2348,6 @@ def directiva_panel():
     with tabs[7]:
         _seccion_cierre_ciclo(info_dir)
 
-    # Reportes
+        # Reportes
     with tabs[8]:
         _seccion_reportes_directiva(info_dir)
