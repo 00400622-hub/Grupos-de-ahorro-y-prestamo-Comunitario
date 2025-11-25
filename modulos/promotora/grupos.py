@@ -1,11 +1,11 @@
 # modulos/promotora/grupos.py
 import streamlit as st
 from datetime import date
-import pandas as pd  # 👈 NUEVO
+import pandas as pd  # 👈 para armar dataframes de los gráficos
 
 from modulos.config.conexion import fetch_all, fetch_one, execute
 from modulos.auth.rbac import require_auth, has_role, get_user
-from modulos.promotora.directiva import crear_directiva_panel  # 👈 ya estaba
+from modulos.promotora.directiva import crear_directiva_panel  # 👈 NUEVO
 
 
 # -------------------------------------------------------
@@ -60,63 +60,39 @@ def _obtener_promotora_actual() -> dict | None:
     )
 
 
-# ===== Helpers específicos para REPORTES (reutilizan la data existente) =====
+# -------------------------------------------------------
+# Helpers para reportes (reglamento + caja)
+# -------------------------------------------------------
 def _obtener_reglamento_por_grupo(id_grupo: int) -> dict | None:
-    return fetch_one(
-        """
-        SELECT *
-        FROM reglamento_grupo
-        WHERE Id_grupo = %s
-        LIMIT 1
-        """,
-        (id_grupo,),
-    )
-
-
-def _obtener_cierres_ciclo_grupo(id_grupo: int):
     """
-    Historial de cierres del grupo (para poder elegir ciclos pasados).
-    """
-    return fetch_all(
-        """
-        SELECT
-            Id_cierre,
-            Fecha_cierre,
-            Fecha_inicio_ciclo,
-            Fecha_fin_ciclo,
-            Total_ahorro_grupo,
-            Porcion_fondo_grupo
-        FROM cierres_ciclo
-        WHERE Id_grupo = %s
-        ORDER BY Fecha_inicio_ciclo ASC, Id_cierre ASC
-        """,
-        (id_grupo,),
-    )
-
-
-def _obtener_caja_rango(id_grupo: int, fecha_inicio=None, fecha_fin=None):
-    """
-    Devuelve las filas de caja_reunion del grupo entre dos fechas (por fecha de reunión),
-    con ingresos, egresos y saldo de cierre.
+    Copia del helper de directiva: trae el reglamento de un grupo.
     """
     sql = """
-        SELECT
-            rg.Fecha AS Fecha,
-            cr.Total_entradas AS Ingresos,
-            cr.Total_salidas AS Egresos,
-            cr.Saldo_cierre AS Saldo_cierre
-        FROM caja_reunion cr
-        JOIN reuniones_grupo rg ON rg.Id_reunion = cr.Id_reunion
-        WHERE cr.Id_grupo = %s
+    SELECT *
+    FROM reglamento_grupo
+    WHERE Id_grupo = %s
+    LIMIT 1
     """
-    params: list = [id_grupo]
+    return fetch_one(sql, (id_grupo,))
 
-    if fecha_inicio is not None and fecha_fin is not None:
-        sql += " AND rg.Fecha BETWEEN %s AND %s"
-        params.extend([fecha_inicio, fecha_fin])
 
-    sql += " ORDER BY rg.Fecha ASC"
-    return fetch_all(sql, tuple(params))
+def _obtener_caja_por_rango(id_grupo: int, fecha_ini, fecha_fin):
+    """
+    Trae la caja (entradas / salidas) por reunión dentro de un rango de fechas.
+    Usamos DATE(rg.Fecha) para que el eje X del gráfico no muestre horas.
+    """
+    sql = """
+    SELECT 
+        DATE(rg.Fecha) AS Fecha,
+        cr.Total_entradas,
+        cr.Total_salidas
+    FROM caja_reunion cr
+    JOIN reuniones_grupo rg ON rg.Id_reunion = cr.Id_reunion
+    WHERE cr.Id_grupo = %s
+      AND rg.Fecha BETWEEN %s AND %s
+    ORDER BY rg.Fecha
+    """
+    return fetch_all(sql, (id_grupo, fecha_ini, fecha_fin))
 
 
 # -------------------------------------------------------
@@ -327,22 +303,19 @@ def _mis_grupos(promotora: dict):
 
 
 # -------------------------------------------------------
-# Sección: Reportes de promotora
+# Sección: Reportes para promotora
 # -------------------------------------------------------
 def _seccion_reportes_promotora(promotora: dict):
-    st.subheader("Reportes de grupos")
+    st.subheader("Reportes de mis grupos")
 
     dui_actual = promotora["DUI"]
 
-    # Grupos a los que tiene acceso esta promotora
+    # Grupos donde la promotora participa
     grupos = fetch_all(
         """
         SELECT g.Id_grupo,
                g.Nombre,
-               d.Nombre AS Distrito,
-               g.Estado,
-               g.Creado_en,
-               g.DUIs_promotoras
+               d.Nombre AS Distrito
         FROM grupos g
         JOIN distritos d ON d.Id_distrito = g.Id_distrito
         WHERE FIND_IN_SET(%s, REPLACE(g.DUIs_promotoras, ' ', '')) > 0
@@ -352,107 +325,71 @@ def _seccion_reportes_promotora(promotora: dict):
     )
 
     if not grupos:
-        st.info("No tienes grupos asignados todavía, por eso no hay reportes.")
+        st.info("No tienes grupos asignados todavía.")
         return
 
     opciones_grupo = {
-        f"{g['Id_grupo']} - {g['Nombre']} ({g['Distrito']})": g for g in grupos
+        f"{g['Id_grupo']} - {g['Nombre']} ({g['Distrito']})": g["Id_grupo"]
+        for g in grupos
     }
 
-    etiqueta_grupo = st.selectbox(
-        "Selecciona el grupo del que deseas ver reportes",
+    etiqueta = st.selectbox(
+        "Selecciona el grupo del que deseas ver los reportes",
         list(opciones_grupo.keys()),
-        key="grupo_reportes",
     )
-    grupo_sel = opciones_grupo.get(etiqueta_grupo)
-    if not grupo_sel:
+    id_grupo_sel = opciones_grupo[etiqueta]
+
+    st.markdown(f"**Grupo seleccionado:** {etiqueta}")
+
+    # Fechas del ciclo según reglamento
+    reglamento = _obtener_reglamento_por_grupo(id_grupo_sel)
+    if not reglamento:
+        st.warning("Este grupo aún no tiene reglamento definido.")
         return
 
-    id_grupo = grupo_sel["Id_grupo"]
+    fecha_ini = reglamento.get("Fecha_inicio_ciclo")
+    fecha_fin = reglamento.get("Fecha_fin_ciclo")
 
-    st.markdown(
-        f"**Grupo seleccionado:** {grupo_sel['Nombre']} "
-        f"(Id_grupo {id_grupo}, Distrito {grupo_sel['Distrito']})"
-    )
-
-    # ------------------ Selección de ciclo ------------------
-    reglamento = _obtener_reglamento_por_grupo(id_grupo)
-    cierres = _obtener_cierres_ciclo_grupo(id_grupo)
-
-    periodos = {}
-    # Ciclo actual según reglamento
-    if reglamento and reglamento.get("Fecha_inicio_ciclo") and reglamento.get(
-        "Fecha_fin_ciclo"
-    ):
-        fi = reglamento["Fecha_inicio_ciclo"]
-        ff = reglamento["Fecha_fin_ciclo"]
-        periodos[
-            f"Ciclo actual (reglamento): {fi} al {ff}"
-        ] = (fi, ff)
-
-    # Ciclos cerrados históricos
-    for c in cierres:
-        etiqueta = (
-            f"Ciclo cerrado {c['Fecha_inicio_ciclo']} al {c['Fecha_fin_ciclo']} "
-            f"(cierre {c['Fecha_cierre']})"
-        )
-        periodos[etiqueta] = (c["Fecha_inicio_ciclo"], c["Fecha_fin_ciclo"])
-
-    if not periodos:
-        st.info(
-            "Este grupo aún no tiene fechas de ciclo definidas en el reglamento "
-            "ni cierres de ciclo registrados. Se mostrará todo el historial de caja."
-        )
-        fecha_ini_sel = None
-        fecha_fin_sel = None
-    else:
-        etiqueta_periodo = st.selectbox(
-            "Selecciona el ciclo o periodo a analizar",
-            list(periodos.keys()),
-            key="periodo_reportes",
-        )
-        fecha_ini_sel, fecha_fin_sel = periodos[etiqueta_periodo]
-
-    # ------------------ Data de caja ------------------
-    datos_caja = _obtener_caja_rango(id_grupo, fecha_ini_sel, fecha_fin_sel)
-
-    if not datos_caja:
-        st.info(
-            "No se encontraron registros de caja para el periodo seleccionado. "
-            "Verifica que ya hayas registrado reuniones y caja para este grupo."
+    if not fecha_ini or not fecha_fin:
+        st.warning(
+            "El reglamento del grupo no tiene definidas las fechas de inicio y fin de ciclo."
         )
         return
 
-    df = pd.DataFrame(datos_caja)
+    st.write(f"Ciclo considerado: **{fecha_ini} → {fecha_fin}**")
 
-    # Resumen numérico
-    total_ingresos = float(df["Ingresos"].sum())
-    total_egresos = float(df["Egresos"].sum())
-    saldo_min = float(df["Saldo_cierre"].min())
-    saldo_max = float(df["Saldo_cierre"].max())
+    datos = _obtener_caja_por_rango(id_grupo_sel, fecha_ini, fecha_fin)
+    if not datos:
+        st.info("No hay registros de caja para este grupo en el ciclo seleccionado.")
+        return
 
-    st.markdown("### Resumen del periodo seleccionado")
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Total ingresos", f"${total_ingresos:,.2f}")
-    with col2:
-        st.metric("Total egresos", f"${total_egresos:,.2f}")
-    with col3:
-        st.metric("Saldo mínimo", f"${saldo_min:,.2f}")
-    with col4:
-        st.metric("Saldo máximo", f"${saldo_max:,.2f}")
+    fechas = [d["Fecha"] for d in datos]
+    ingresos = [float(d["Total_entradas"] or 0) for d in datos]
+    egresos = [float(d["Total_salidas"] or 0) for d in datos]
+    consolidado = [ingresos[i] - egresos[i] for i in range(len(ingresos))]
 
-    # ------------ Gráfico de ingresos vs egresos ------------
-    st.markdown("### Ingresos vs egresos por reunión")
+    # ---- Gráfico 1: Ingresos vs Egresos ----
+    df_ie = pd.DataFrame(
+        {
+            "Fecha": fechas,
+            "Ingresos": ingresos,
+            "Egresos": egresos,
+        }
+    )
 
-    df_ie = df[["Fecha", "Ingresos", "Egresos"]].set_index("Fecha")
-    st.line_chart(df_ie)
+    st.markdown("## Ingresos vs egresos por reunión")
+    st.line_chart(df_ie, x="Fecha", y=["Ingresos", "Egresos"])
 
-    # ------------ Gráfico consolidado (saldo) ------------
-    st.markdown("### Saldo de caja del grupo (consolidado)")
+    # ---- Gráfico 2: Consolidado ----
+    df_cons = pd.DataFrame(
+        {
+            "Fecha": fechas,
+            "Consolidado": consolidado,
+        }
+    )
 
-    df_saldo = df[["Fecha", "Saldo_cierre"]].set_index("Fecha")
-    st.line_chart(df_saldo)
+    st.markdown("## Consolidado por reunión")
+    st.line_chart(df_cons, x="Fecha", y=["Consolidado"])
 
 
 # -------------------------------------------------------
@@ -479,10 +416,9 @@ def promotora_panel():
     with tabs[1]:
         _mis_grupos(promotora)
 
-    # 👉 Aquí se muestra el panel de creación / gestión de directivas
+    # 👉 AQUÍ ya se muestra el panel de creación / gestión de directivas
     with tabs[2]:
         crear_directiva_panel(promotora)
 
-    # 👉 NUEVO: reportes para los grupos de la promotora
     with tabs[3]:
         _seccion_reportes_promotora(promotora)
